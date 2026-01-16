@@ -24,7 +24,7 @@ pub opaque type RegistryMessage(key, msg) {
       Result(actor.Started(process.Subject(msg)), actor.StartError),
     reply_to: process.Subject(Result(process.Subject(msg), actor.StartError)),
   )
-  ProcessDown(pid: process.Pid)
+  ProcessExited(pid: process.Pid, reason: process.ExitReason)
 }
 
 @internal
@@ -38,6 +38,8 @@ fn start_registry_actor(
   registry: Registry(key, msg),
 ) -> Result(actor.Started(Registry(key, msg)), actor.StartError) {
   actor.new_with_initialiser(1000, fn(_) {
+    process.trap_exits(True)
+
     use ets_table <- result.map(
       ets.new(registry.ets_table_name)
       |> result.replace_error("Failed to create ETS table"),
@@ -46,11 +48,8 @@ fn start_registry_actor(
     let selector =
       process.new_selector()
       |> process.select(get_subject(registry))
-      |> process.select_monitors(fn(down) {
-        case down {
-          process.ProcessDown(monitor: _, pid:, reason: _) -> ProcessDown(pid:)
-          process.PortDown(..) -> ProcessDown(pid: process.self())
-        }
+      |> process.select_trapped_exits(fn(exit) {
+        ProcessExited(exit.pid, exit.reason)
       })
 
     actor.initialised(ets_table)
@@ -67,7 +66,7 @@ fn on_message(
   message: RegistryMessage(key, msg),
 ) -> actor.Next(ets.Table, RegistryMessage(key, msg)) {
   case message {
-    ProcessDown(pid:) -> {
+    ProcessExited(pid:) -> {
       case pdict_delete(pid) {
         Ok(key_dynamic) -> {
           let _ = ets.delete_using_dynamic(key_dynamic, ets_table)
@@ -86,19 +85,15 @@ fn on_message(
           actor.continue(ets_table)
         }
         Error(Nil) -> {
-          let result = {
+          process.send(reply_to, {
             use started <- result.map(start_fn(key))
             let actor.Started(pid:, data: subject) = started
-
-            process.unlink(pid)
-            let _ = process.monitor(pid)
             let assert Ok(Nil) = ets.insert(key, subject, ets_table)
             pdict_put(pid, key)
 
             subject
-          }
+          })
 
-          process.send(reply_to, result)
           actor.continue(ets_table)
         }
       }
