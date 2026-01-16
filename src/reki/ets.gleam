@@ -33,10 +33,7 @@ pub fn lookup_dynamic(key: a, table: Table) -> Result(dynamic.Dynamic, Nil) {
 
 /// Look up a value by key using the table name directly.
 /// Returns Error(Nil) if the table doesn't exist or key not found.
-pub fn lookup_by_name(
-  name: String,
-  key: a,
-) -> Result(dynamic.Dynamic, Nil) {
+pub fn lookup_by_name(name: String, key: a) -> Result(dynamic.Dynamic, Nil) {
   lookup_ets(name, to_dynamic(key))
 }
 
