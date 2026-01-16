@@ -24,7 +24,7 @@ pub opaque type RegistryMessage(key, msg) {
       Result(actor.Started(process.Subject(msg)), actor.StartError),
     reply_to: process.Subject(Result(process.Subject(msg), actor.StartError)),
   )
-  ProcessExited(pid: process.Pid, reason: process.ExitReason)
+  ProcessExited(pid: process.Pid)
 }
 
 @internal
@@ -48,9 +48,7 @@ fn start_registry_actor(
     let selector =
       process.new_selector()
       |> process.select(get_subject(registry))
-      |> process.select_trapped_exits(fn(exit) {
-        ProcessExited(exit.pid, exit.reason)
-      })
+      |> process.select_trapped_exits(fn(exit) { ProcessExited(exit.pid) })
 
     actor.initialised(ets_table)
     |> actor.selecting(selector)

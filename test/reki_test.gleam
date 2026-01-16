@@ -383,6 +383,7 @@ pub fn registry_restarts_after_crash_when_supervised_test() {
   let assert Ok(actor) =
     reki.lookup_or_start(registry, "test_key", test_start_fn)
 
+  let pid = get_pid(actor)
   process.send(actor, Incr)
   assert get_state(actor) == 1
 
@@ -390,6 +391,8 @@ pub fn registry_restarts_after_crash_when_supervised_test() {
   process.kill(registry_pid)
 
   process.sleep(100)
+
+  assert process.is_alive(pid) == False
 
   let assert Ok(new_actor) =
     reki.lookup_or_start(registry, "test_key", test_start_fn)
@@ -416,8 +419,9 @@ pub fn registry_ets_table_cleared_on_restart_test() {
 
   process.sleep(100)
 
+  assert process.is_alive(pid1) == False
+
   // After registry restart, ETS is cleared so we get a new actor
-  // (old actor may still be running but is orphaned - like gen_registry)
   let assert Ok(actor2) =
     reki.lookup_or_start(registry, "test_key", test_start_fn)
 
@@ -496,13 +500,14 @@ pub fn concurrent_lookups_with_different_keys_test() {
   do("key2")
   do("key3")
 
-  let assert Ok(#("key1", Ok(actor1))) = process.receive(results, timeout)
-  let assert Ok(#("key2", Ok(actor2))) = process.receive(results, timeout)
-  let assert Ok(#("key3", Ok(actor3))) = process.receive(results, timeout)
+  let assert Ok(#(k1, Ok(actor1))) = process.receive(results, timeout)
+  let assert Ok(#(k2, Ok(actor2))) = process.receive(results, timeout)
+  let assert Ok(#(k3, Ok(actor3))) = process.receive(results, timeout)
 
-  assert actor1 != actor2
-  assert actor2 != actor3
-  assert actor1 != actor3
+  assert list.sort([k1, k2, k3], string.compare) == ["key1", "key2", "key3"]
+
+  let actors = [actor1, actor2, actor3]
+  assert list.length(list.unique(actors)) == 3
 }
 
 pub fn actor_crashes_immediately_after_start_test() {
@@ -613,6 +618,7 @@ pub fn lookup_after_registry_restart_test() {
   let assert Ok(actor1) =
     reki.lookup_or_start(registry, "test_key", test_start_fn)
 
+  let pid1 = get_pid(actor1)
   process.send(actor1, Incr)
   process.send(actor1, Incr)
   assert get_state(actor1) == 2
@@ -621,12 +627,13 @@ pub fn lookup_after_registry_restart_test() {
   process.kill(registry_pid)
   process.sleep(200)
 
-  let _pid1 = get_pid(actor1)
+  assert process.is_alive(pid1) == False
 
   let assert Ok(actor2) =
     reki.lookup_or_start(registry, "test_key", test_start_fn)
 
-  let _pid2 = get_pid(actor2)
+  let pid2 = get_pid(actor2)
+  assert pid2 != pid1
   assert get_state(actor2) == 0
 }
 
@@ -636,12 +643,15 @@ pub fn factory_supervisor_restart_test() {
   let assert Ok(actor1) =
     reki.lookup_or_start(registry, "test_key", test_start_fn)
 
+  let pid1 = get_pid(actor1)
   process.send(actor1, Incr)
   assert get_state(actor1) == 1
 
   let assert Ok(registry_pid) = reki.get_pid(registry)
   process.kill(registry_pid)
   process.sleep(200)
+
+  assert process.is_alive(pid1) == False
 
   let assert Ok(actor2) =
     reki.lookup_or_start(registry, "test_key", test_start_fn)
