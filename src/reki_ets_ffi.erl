@@ -5,10 +5,23 @@
     insert/3,
     lookup/2,
     delete/2,
-    delete_all_objects/1,
     to_dynamic/1,
-    cast_subject/1
+    cast_subject/1,
+    pdict_put/2,
+    pdict_delete/1
 ]).
+
+-spec pdict_put(term(), term()) -> nil.
+pdict_put(Key, Value) ->
+    erlang:put(Key, Value),
+    nil.
+
+-spec pdict_delete(term()) -> {ok, term()} | {error, nil}.
+pdict_delete(Key) ->
+    case erlang:erase(Key) of
+        undefined -> {error, nil};
+        Value -> {ok, Value}
+    end.
 
 -spec cast_subject(term()) -> term().
 cast_subject(Value) ->
@@ -88,13 +101,3 @@ delete(NameBin, Key) ->
         error:badarg -> {error, nil}
     end.
 
--spec delete_all_objects(binary()) -> {ok, nil} | {error, nil}.
-delete_all_objects(NameBin) ->
-    try
-        Name = binary_to_atom(NameBin),
-        Tid = ets:whereis(Name),
-        ets:delete_all_objects(Tid),
-        {ok, nil}
-    catch
-        error:badarg -> {error, nil}
-    end.

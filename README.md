@@ -1,6 +1,6 @@
 # reki
 
-A Gleam actor registry that manages actors by key, similar to Discord's `gen_registry` in Elixir. It provides a way to look up or start actors on demand, ensuring only one actor exists per key and automatically cleaning up dead processes.
+A Gleam actor registry that manages actors by key, similar to Discord's [gen_registry](https://github.com/discord/gen_registry) in Elixir. It provides a way to look up or start actors on demand ensuring only one actor exists per key, while automatically cleaning up dead processes.
 
 ## Installation
 
@@ -8,83 +8,72 @@ Add to your `gleam.toml` as a git dependency:
 
 ```toml
 [dependencies]
-reki = { git = "git@github.com:otters/reki.git", ref = "<commit hash>" }
+reki = { git = "git@github.com:alii/reki.git", ref = "<commit hash>" }
 ```
 
 ## Usage
 
 ```gleam
-import reki
 import gleam/erlang/process
+import gleam/list
 import gleam/otp/actor
-import gleam/otp/static_supervisor.{type Supervisor} as supervisor
-import gleam/result
+import gleam/otp/static_supervisor as supervisor
+import reki
 
-pub type CounterMessage {
-  Increment
-  Get(reply: process.Subject(Int))
+pub type ChannelMsg {
+  Subscribe(process.Subject(String))
+  Publish(String)
+}
+
+pub type ChannelState {
+  ChannelState(name: String, subscribers: List(process.Subject(String)))
+}
+
+fn start_channel(name: String) {
+  actor.new(ChannelState(name:, subscribers: []))
+  |> actor.on_message(fn(state, msg) {
+    println("Channel" <> state.name <> " received message: " <> inspect(msg))
+
+    case msg {
+      Subscribe(sub) ->
+        actor.continue(ChannelState(..state, subscribers: [sub, ..state.subscribers]))
+      Publish(text) -> {
+        list.each(state.subscribers, process.send(_, text))
+        actor.continue(state)
+      }
+    }
+  })
+  |> actor.start
 }
 
 pub fn main() {
-  // Create registry at program start (before supervision tree)
-  let registry = reki.new("my_registry")
+  let channels = reki.new()
 
-   let assert Ok(_) =
+  let assert Ok(_) =
     supervisor.new(supervisor.OneForOne)
-    |> supervisor.add(reki.supervised(registry))
+    |> supervisor.add(reki.supervised(channels))
     |> supervisor.start
 
-   let assert Ok(counter) = reki.lookup_or_start(
-    registry,
-    "user_123",
-    fn() {
-      actor.new(0)
-      |> actor.on_message(fn(state, msg) {
-        case msg {
-          Increment -> state + 1 |> actor.continue
-          Get(reply:) -> {
-            process.send(reply, state)
-            actor.continue(state)
-          }
-        }
-      })
-      |> actor.start
-    }
-  )
+  let assert Ok(general) =
+    reki.lookup_or_start(channels, "general", start_channel)
 
-  // Use the actor - send messages and receive replies
-  process.send(counter, Increment)
-  process.send(counter, Increment)
+  let inbox = process.new_subject()
+  process.send(general, Subscribe(inbox))
 
-  let reply = process.new_subject()
-  process.send(counter, Get(reply:))
-  let assert Ok(2) = process.receive(reply, 1000)
+  process.send(general, Publish("Hello!"))
 
-  // Look up the same actor again - returns the same counter
-  let assert Ok(same_counter) = reki.lookup_or_start(
-    registry,
-    "user_123",
-    fn() {
-      actor.new(0)
-      |> actor.on_message(fn(state, msg) {
-        case msg {
-          Increment -> state + 1 |> actor.continue
-          Get(reply:) -> {
-            process.send(reply, state)
-            actor.continue(state)
-          }
-        }
-      })
-      |> actor.start
-    }
-  )
+  let assert Ok(same_channel) =
+    reki.lookup_or_start(channels, "general", start_channel)
 
-  assert same_counter == counter
+  process.send(same_channel, Publish("Also hello!"))
 }
 ```
 
 ## How it works
 
-The registry maintains a dictionary of actors keyed by whatever key you want to use. When you call `lookup_or_start`, it checks if an actor exists for that key. If it does, it returns the existing actor synchronously via ETS (no timeout needed). If not, it starts a new one using your provided start function under a factory supervisor and registers it.
+Like gen_registry, reki stores `{key, subject}` mappings in ETS for fast O(1) lookups that bypass the registry actor. The registry actor serializes "lookup or start" operations to prevent races when multiple processes request the same key simultaneously.
 
-All dynamically started actors are supervised by a factory supervisor, ensuring they are properly managed and restarted if they crash abnormally. The registry monitors all registered actors and automatically removes them when they die, preventing memory leaks. Concurrent lookups are handled safely through the actor's message queue, ensuring only one actor is created per key even when multiple processes request the same key simultaneously.
+- **Fast reads**: Existing actors are looked up directly from ETS
+- **Direct spawning**: Workers are spawned directly by the registry (like gen_registry)
+- **Automatic cleanup**: The registry monitors actors and removes them from ETS when they die
+- **Concurrent safety**: Start operations are serialized through the registry actor

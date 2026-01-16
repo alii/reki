@@ -31,6 +31,15 @@ pub fn lookup_dynamic(key: a, table: Table) -> Result(dynamic.Dynamic, Nil) {
   lookup_ets(table.name, to_dynamic(key))
 }
 
+/// Look up a value by key using the table name directly.
+/// Returns Error(Nil) if the table doesn't exist or key not found.
+pub fn lookup_by_name(
+  name: String,
+  key: a,
+) -> Result(dynamic.Dynamic, Nil) {
+  lookup_ets(name, to_dynamic(key))
+}
+
 /// Delete a key-value pair from the table.
 pub fn delete(key: a, table: Table) -> Result(Nil, Nil) {
   delete_ets(table.name, to_dynamic(key))
@@ -42,11 +51,6 @@ pub fn delete_using_dynamic(
   table: Table,
 ) -> Result(Nil, Nil) {
   delete_ets(table.name, key)
-}
-
-/// Clear all entries from the table.
-pub fn clear_table(table: Table) -> Result(Nil, Nil) {
-  delete_all_objects_ets(table.name)
 }
 
 // Internal FFI functions
@@ -72,9 +76,6 @@ fn lookup_ets(
 
 @external(erlang, "reki_ets_ffi", "delete")
 fn delete_ets(name: String, key: dynamic.Dynamic) -> Result(Nil, Nil)
-
-@external(erlang, "reki_ets_ffi", "delete_all_objects")
-fn delete_all_objects_ets(name: String) -> Result(Nil, Nil)
 
 @external(erlang, "reki_ets_ffi", "to_dynamic")
 fn to_dynamic(value: a) -> dynamic.Dynamic

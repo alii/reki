@@ -1,9 +1,10 @@
 import gleam/dynamic
 import gleam/erlang/process
+import gleam/erlang/reference
 import gleam/otp/actor
-import gleam/otp/factory_supervisor
-import gleam/otp/static_supervisor
 import gleam/otp/supervision
+import gleam/result
+import gleam/string
 import reki/ets
 
 /// A registry that manages actors by key.
@@ -11,24 +12,7 @@ import reki/ets
 /// on demand, ensuring only one actor exists per key.
 pub opaque type Registry(key, msg) {
   Registry(
-    subject: process.Subject(RegistryMessage(key, msg)),
-    factory_supervisor_name: process.Name(
-      factory_supervisor.Message(
-        fn() -> Result(actor.Started(process.Subject(msg)), actor.StartError),
-        process.Subject(msg),
-      ),
-    ),
-    ets_table_name: String,
-  )
-
-  NamedRegistry(
     registry_name: process.Name(RegistryMessage(key, msg)),
-    factory_supervisor_name: process.Name(
-      factory_supervisor.Message(
-        fn() -> Result(actor.Started(process.Subject(msg)), actor.StartError),
-        process.Subject(msg),
-      ),
-    ),
     ets_table_name: String,
   )
 }
@@ -36,108 +20,85 @@ pub opaque type Registry(key, msg) {
 pub opaque type RegistryMessage(key, msg) {
   StartIfNotExists(
     key: key,
-    start_fn: fn() ->
+    start_fn: fn(key) ->
       Result(actor.Started(process.Subject(msg)), actor.StartError),
     reply_to: process.Subject(Result(process.Subject(msg), actor.StartError)),
   )
   ProcessDown(pid: process.Pid)
 }
 
-@external(erlang, "reki_ets_ffi", "cast_subject")
-fn cast_subject(value: dynamic.Dynamic) -> process.Subject(msg)
-
 @internal
 pub fn get_subject(
   registry: Registry(key, msg),
 ) -> process.Subject(RegistryMessage(key, msg)) {
-  case registry {
-    NamedRegistry(registry_name:, ..) -> process.named_subject(registry_name)
-    Registry(subject:, ..) -> subject
-  }
+  process.named_subject(registry.registry_name)
 }
 
 fn start_registry_actor(
   registry: Registry(key, msg),
 ) -> Result(actor.Started(Registry(key, msg)), actor.StartError) {
-  let builder =
-    actor.new_with_initialiser(1000, fn(_) {
-      case ets.new(registry.ets_table_name) {
-        Ok(ets_table) -> {
-          let selector =
-            process.new_selector()
-            |> process.select(get_subject(registry))
-            |> process.select_monitors(fn(down) {
-              case down {
-                process.ProcessDown(monitor: _, pid:, reason: _) ->
-                  ProcessDown(pid:)
-                process.PortDown(..) -> ProcessDown(pid: process.self())
-              }
-            })
+  actor.new_with_initialiser(1000, fn(_) {
+    use ets_table <- result.map(
+      ets.new(registry.ets_table_name)
+      |> result.replace_error("Failed to create ETS table"),
+    )
 
-          actor.initialised(ets_table)
-          |> actor.selecting(selector)
-          |> actor.returning(registry)
-          |> Ok
+    let selector =
+      process.new_selector()
+      |> process.select(get_subject(registry))
+      |> process.select_monitors(fn(down) {
+        case down {
+          process.ProcessDown(monitor: _, pid:, reason: _) -> ProcessDown(pid:)
+          process.PortDown(..) -> ProcessDown(pid: process.self())
         }
-        Error(Nil) -> Error("Failed to create ETS table")
-      }
-    })
-    |> actor.on_message(fn(state, message) {
-      on_message(state, message, registry)
-    })
+      })
 
-  case registry {
-    NamedRegistry(registry_name:, ..) -> actor.named(builder, registry_name)
-    Registry(..) -> builder
-  }
+    actor.initialised(ets_table)
+    |> actor.selecting(selector)
+    |> actor.returning(registry)
+  })
+  |> actor.on_message(on_message)
+  |> actor.named(registry.registry_name)
   |> actor.start
 }
 
 fn on_message(
   ets_table: ets.Table,
   message: RegistryMessage(key, msg),
-  registry: Registry(key, msg),
 ) -> actor.Next(ets.Table, RegistryMessage(key, msg)) {
   case message {
+    ProcessDown(pid:) -> {
+      case pdict_delete(pid) {
+        Ok(key_dynamic) -> {
+          let _ = ets.delete_using_dynamic(key_dynamic, ets_table)
+          Nil
+        }
+        Error(Nil) -> Nil
+      }
+
+      actor.continue(ets_table)
+    }
+
     StartIfNotExists(key:, start_fn:, reply_to:) -> {
       case ets.lookup_dynamic(key, ets_table) {
         Ok(subject_dynamic) -> {
           process.send(reply_to, Ok(cast_subject(subject_dynamic)))
           actor.continue(ets_table)
         }
-
         Error(Nil) -> {
-          case
-            registry.factory_supervisor_name
-            |> factory_supervisor.get_by_name()
-            |> factory_supervisor.start_child(start_fn)
-          {
-            Ok(actor.Started(pid:, data: subject)) -> {
-              let _ = process.monitor(pid)
+          let result = {
+            use started <- result.map(start_fn(key))
+            let actor.Started(pid:, data: subject) = started
 
-              let assert Ok(Nil) = ets.insert(key, subject, ets_table)
-              let assert Ok(Nil) = ets.insert(pid, key, ets_table)
+            process.unlink(pid)
+            let _ = process.monitor(pid)
+            let assert Ok(Nil) = ets.insert(key, subject, ets_table)
+            pdict_put(pid, key)
 
-              process.send(reply_to, Ok(subject))
-              actor.continue(ets_table)
-            }
-            Error(e) -> {
-              process.send(reply_to, Error(e))
-              actor.continue(ets_table)
-            }
+            subject
           }
-        }
-      }
-    }
 
-    ProcessDown(pid:) -> {
-      case ets.lookup_dynamic(pid, ets_table) {
-        Ok(key_dynamic) -> {
-          let _ = ets.delete_using_dynamic(key_dynamic, ets_table)
-          let _ = ets.delete(pid, ets_table)
-          actor.continue(ets_table)
-        }
-        Error(Nil) -> {
+          process.send(reply_to, result)
           actor.continue(ets_table)
         }
       }
@@ -145,71 +106,27 @@ fn on_message(
   }
 }
 
-/// Start the registry with the given registry. You likely want to use the
-/// `supervised` function instead, to add the registry to your supervision
-/// tree, but this may still be useful in your tests.
-///
-/// Remember that names must be created at the start of your program, and must
-/// not be created dynamically such as within your supervision tree (it may
-/// restart, creating new names) or in a loop.
+/// Start the registry. You likely want to use the `supervised` function instead,
+/// to add the registry to your supervision tree, but this may be useful in tests.
 pub fn start(
   registry: Registry(key, msg),
 ) -> Result(actor.Started(Registry(key, msg)), actor.StartError) {
-  case
-    factory_supervisor.worker_child(fn(start_fn) { start_fn() })
-    |> factory_supervisor.restart_strategy(supervision.Transient)
-    |> factory_supervisor.named(registry.factory_supervisor_name)
-    |> factory_supervisor.start
-  {
-    Ok(actor.Started(pid: _, data: _)) -> start_registry_actor(registry)
-    Error(e) -> Error(e)
-  }
+  start_registry_actor(registry)
 }
 
-/// Create a registry with a given name. Call this at the start of
-/// your program before creating the supervision tree.
-pub fn new_named(name: String) -> Registry(key, msg) {
-  NamedRegistry(
-    registry_name: process.new_name(name),
-    factory_supervisor_name: process.new_name(name <> "@factory@supervisor"),
-    ets_table_name: name <> "@ets",
-  )
-}
-
-/// You probably want to use new_named.
-/// 
-/// Create a registry. Call this at the start of
-/// your program before creating the supervision tree.
+/// Create a registry. Call this at the start of your program before
+/// creating the supervision tree.
 pub fn new() -> Registry(key, msg) {
+  let unique_id = string.inspect(reference.new())
   Registry(
-    subject: process.new_subject(),
-    factory_supervisor_name: process.new_name("factory@supervisor"),
-    ets_table_name: "ets",
+    registry_name: process.new_name("reki@" <> unique_id),
+    ets_table_name: "reki@" <> unique_id,
   )
-}
-
-fn get_factory(registry: Registry(key, msg)) {
-  factory_supervisor.worker_child(fn(start_fn) { start_fn() })
-  |> factory_supervisor.restart_strategy(supervision.Transient)
-  |> factory_supervisor.named(registry.factory_supervisor_name)
-  |> factory_supervisor.supervised
-}
-
-fn get_worker(registry: Registry(key, msg)) {
-  supervision.worker(fn() { start_registry_actor(registry) })
 }
 
 /// A specification for starting the registry under a supervisor.
-///
-/// This returns a supervisor that manages both the factory supervisor (which
-/// supervises dynamically started actors) and the registry actor itself.
 pub fn supervised(registry: Registry(key, msg)) {
-  supervision.supervisor(fn() {
-    static_supervisor.new(static_supervisor.OneForAll)
-    |> static_supervisor.add(get_factory(registry))
-    |> static_supervisor.add(get_worker(registry))
-    |> static_supervisor.start
-  })
+  supervision.worker(fn() { start_registry_actor(registry) })
 }
 
 @internal
@@ -225,24 +142,23 @@ pub fn get_pid(registry: Registry(a, b)) {
 pub fn lookup_or_start(
   registry: Registry(key, msg),
   key: key,
-  start_fn: fn() ->
+  start_fn: fn(key) ->
     Result(actor.Started(process.Subject(msg)), actor.StartError),
 ) -> Result(process.Subject(msg), actor.StartError) {
-  case ets.get_or_create(registry.ets_table_name) {
-    Ok(ets_table) -> {
-      case ets.lookup_dynamic(key, ets_table) {
-        Ok(subject_dynamic) -> Ok(cast_subject(subject_dynamic))
-        Error(Nil) -> {
-          actor.call(get_subject(registry), 5000, fn(reply_to) {
-            StartIfNotExists(key:, start_fn:, reply_to:)
-          })
-        }
-      }
-    }
-    Error(Nil) -> {
+  case ets.lookup_by_name(registry.ets_table_name, key) {
+    Ok(subject_dynamic) -> Ok(cast_subject(subject_dynamic))
+    Error(Nil) ->
       actor.call(get_subject(registry), 5000, fn(reply_to) {
         StartIfNotExists(key:, start_fn:, reply_to:)
       })
-    }
   }
 }
+
+@external(erlang, "reki_ets_ffi", "cast_subject")
+fn cast_subject(value: dynamic.Dynamic) -> process.Subject(msg)
+
+@external(erlang, "reki_ets_ffi", "pdict_put")
+fn pdict_put(pid: process.Pid, key: key) -> Nil
+
+@external(erlang, "reki_ets_ffi", "pdict_delete")
+fn pdict_delete(pid: process.Pid) -> Result(dynamic.Dynamic, Nil)
