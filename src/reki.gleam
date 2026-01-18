@@ -1,6 +1,7 @@
 import gleam/dynamic
 import gleam/erlang/process
 import gleam/erlang/reference
+import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/otp/supervision
 import gleam/result
@@ -78,11 +79,11 @@ fn on_message(
 
     StartIfNotExists(key:, start_fn:, reply_to:) -> {
       case ets.lookup_dynamic(key, ets_table) {
-        Ok(subject_dynamic) -> {
+        Some(subject_dynamic) -> {
           process.send(reply_to, Ok(cast_subject(subject_dynamic)))
           actor.continue(ets_table)
         }
-        Error(Nil) -> {
+        None -> {
           process.send(reply_to, {
             use started <- result.map(start_fn(key))
             let actor.Started(pid:, data: subject) = started
@@ -118,13 +119,10 @@ pub fn new() -> Registry(key, msg) {
 }
 
 /// A specification for starting the registry under a supervisor.
-pub fn supervised(registry: Registry(key, msg)) {
+pub fn supervised(
+  registry: Registry(key, msg),
+) -> supervision.ChildSpecification(Registry(key, msg)) {
   supervision.worker(fn() { start_registry_actor(registry) })
-}
-
-@internal
-pub fn get_pid(registry: Registry(a, b)) {
-  get_subject(registry) |> process.subject_owner()
 }
 
 /// Looks up an actor by key in the registry, or starts it if it doesn't exist.
@@ -138,13 +136,43 @@ pub fn lookup_or_start(
   start_fn: fn(key) ->
     Result(actor.Started(process.Subject(msg)), actor.StartError),
 ) -> Result(process.Subject(msg), actor.StartError) {
+  lookup_or_start_with_timeout(registry, key, start_fn, 5000)
+}
+
+/// Looks up an actor by key in the registry.
+/// Returns `None` if no actor exists for the given key.
+/// This function performs a synchronous lookup via ETS, so no timeout is needed.
+/// If you want to start the actor if it doesn't exist, use `lookup_or_start` instead.
+pub fn lookup(
+  registry: Registry(key, msg),
+  key: key,
+) -> Option(process.Subject(msg)) {
   case ets.lookup_by_name(registry.ets_table_name, key) {
-    Ok(subject_dynamic) -> Ok(cast_subject(subject_dynamic))
-    Error(Nil) ->
-      actor.call(get_subject(registry), 5000, fn(reply_to) {
+    Some(subject_dynamic) -> Some(cast_subject(subject_dynamic))
+    None -> None
+  }
+}
+
+@internal
+pub fn lookup_or_start_with_timeout(
+  registry: Registry(key, msg),
+  key: key,
+  start_fn: fn(key) ->
+    Result(actor.Started(process.Subject(msg)), actor.StartError),
+  timeout: Int,
+) -> Result(process.Subject(msg), actor.StartError) {
+  case lookup(registry, key) {
+    Some(sub) -> Ok(sub)
+    None ->
+      actor.call(get_subject(registry), timeout, fn(reply_to) {
         StartIfNotExists(key:, start_fn:, reply_to:)
       })
   }
+}
+
+@internal
+pub fn get_pid(registry: Registry(a, b)) -> Result(process.Pid, Nil) {
+  get_subject(registry) |> process.subject_owner()
 }
 
 @external(erlang, "reki_ets_ffi", "cast_subject")

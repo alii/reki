@@ -1,5 +1,6 @@
 import gleam/erlang/process
 import gleam/list
+import gleam/option
 import gleam/otp/actor
 import gleam/otp/static_supervisor as supervisor
 import gleam/string
@@ -316,10 +317,9 @@ pub fn actor_crash_does_not_affect_other_actors_test() {
 
   assert actor_a != actor_b
 
-  // a
   process.send(actor_a, Incr)
   process.send(actor_a, Incr)
-  // b
+
   process.send(actor_b, Incr)
   process.send(actor_b, Incr)
   process.send(actor_b, Incr)
@@ -421,7 +421,6 @@ pub fn registry_ets_table_cleared_on_restart_test() {
 
   assert process.is_alive(pid1) == False
 
-  // After registry restart, ETS is cleared so we get a new actor
   let assert Ok(actor2) =
     reki.lookup_or_start(registry, "test_key", test_start_fn)
 
@@ -789,4 +788,125 @@ pub fn same_key_high_concurrency_test() {
       assert actors == []
     }
   }
+}
+
+pub fn lookup_returns_none_when_key_not_found_test() {
+  let registry = create_registry()
+  let assert option.None = reki.lookup(registry, "nonexistent_key")
+}
+
+pub fn lookup_returns_actor_after_lookup_or_start_test() {
+  let registry = create_registry()
+
+  let assert Ok(actor) =
+    reki.lookup_or_start(registry, "test_key", test_start_fn)
+
+  let assert option.Some(found_actor) = reki.lookup(registry, "test_key")
+
+  assert actor == found_actor
+}
+
+pub fn lookup_returns_none_for_unstarted_key_test() {
+  let registry = create_registry()
+
+  let assert Ok(_actor1) = reki.lookup_or_start(registry, "key1", test_start_fn)
+
+  let assert option.None = reki.lookup(registry, "key2")
+}
+
+pub fn lookup_finds_correct_actor_among_multiple_keys_test() {
+  let registry = create_registry()
+
+  let assert Ok(actor1) = reki.lookup_or_start(registry, "key1", test_start_fn)
+  let assert Ok(actor2) = reki.lookup_or_start(registry, "key2", test_start_fn)
+  let assert Ok(actor3) = reki.lookup_or_start(registry, "key3", test_start_fn)
+
+  let assert option.Some(found1) = reki.lookup(registry, "key1")
+  let assert option.Some(found2) = reki.lookup(registry, "key2")
+  let assert option.Some(found3) = reki.lookup(registry, "key3")
+
+  assert found1 == actor1
+  assert found2 == actor2
+  assert found3 == actor3
+}
+
+pub fn lookup_returns_none_after_actor_dies_test() {
+  let registry = create_registry()
+
+  let assert Ok(actor) =
+    reki.lookup_or_start(registry, "dying_key", test_start_fn)
+
+  let assert option.Some(found) = reki.lookup(registry, "dying_key")
+  assert found == actor
+
+  let pid = get_pid(actor)
+  process.kill(pid)
+  process.sleep(100)
+
+  let assert option.None = reki.lookup(registry, "dying_key")
+}
+
+pub fn lookup_state_is_preserved_test() {
+  let registry = create_registry()
+
+  let assert Ok(actor) =
+    reki.lookup_or_start(registry, "counter", test_start_fn)
+
+  process.send(actor, Incr)
+  process.send(actor, Incr)
+  process.send(actor, Incr)
+
+  let assert option.Some(found_actor) = reki.lookup(registry, "counter")
+
+  assert get_state(found_actor) == 3
+}
+
+pub fn lookup_concurrent_test() {
+  let registry = create_registry()
+
+  let assert Ok(actor) =
+    reki.lookup_or_start(registry, "concurrent_lookup", test_start_fn)
+
+  let results = process.new_subject()
+
+  process.spawn(fn() {
+    case reki.lookup(registry, "concurrent_lookup") {
+      option.Some(found) -> process.send(results, option.Some(found))
+      option.None -> process.send(results, option.None)
+    }
+  })
+
+  process.spawn(fn() {
+    case reki.lookup(registry, "concurrent_lookup") {
+      option.Some(found) -> process.send(results, option.Some(found))
+      option.None -> process.send(results, option.None)
+    }
+  })
+
+  process.spawn(fn() {
+    case reki.lookup(registry, "concurrent_lookup") {
+      option.Some(found) -> process.send(results, option.Some(found))
+      option.None -> process.send(results, option.None)
+    }
+  })
+
+  let assert Ok(option.Some(found1)) = process.receive(results, 100)
+  let assert Ok(option.Some(found2)) = process.receive(results, 100)
+  let assert Ok(option.Some(found3)) = process.receive(results, 100)
+
+  assert found1 == actor
+  assert found2 == actor
+  assert found3 == actor
+}
+
+pub fn lookup_with_supervised_registry_test() {
+  let registry = create_supervised_registry()
+
+  let assert option.None = reki.lookup(registry, "test_key")
+
+  let assert Ok(actor) =
+    reki.lookup_or_start(registry, "test_key", test_start_fn)
+
+  let assert option.Some(found) = reki.lookup(registry, "test_key")
+  assert found == actor
 }

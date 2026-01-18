@@ -1,4 +1,5 @@
 import gleam/dynamic
+import gleam/option.{type Option}
 
 /// An ETS table handle. Tables are named and can be accessed by name.
 pub opaque type Table {
@@ -27,13 +28,13 @@ pub fn insert(key: a, value: b, table: Table) -> Result(Nil, Nil) {
 }
 
 /// Look up a value by key in the table, returning it as a Dynamic value.
-pub fn lookup_dynamic(key: a, table: Table) -> Result(dynamic.Dynamic, Nil) {
+pub fn lookup_dynamic(key: a, table: Table) -> Option(dynamic.Dynamic) {
   lookup_ets(table.name, to_dynamic(key))
 }
 
 /// Look up a value by key using the table name directly.
-/// Returns Error(Nil) if the table doesn't exist or key not found.
-pub fn lookup_by_name(name: String, key: a) -> Result(dynamic.Dynamic, Nil) {
+/// Returns None if the table doesn't exist or key not found.
+pub fn lookup_by_name(name: String, key: a) -> Option(dynamic.Dynamic) {
   lookup_ets(name, to_dynamic(key))
 }
 
@@ -69,7 +70,7 @@ fn insert_ets(
 fn lookup_ets(
   name: String,
   key: dynamic.Dynamic,
-) -> Result(dynamic.Dynamic, Nil)
+) -> Option(dynamic.Dynamic)
 
 @external(erlang, "reki_ets_ffi", "delete")
 fn delete_ets(name: String, key: dynamic.Dynamic) -> Result(Nil, Nil)

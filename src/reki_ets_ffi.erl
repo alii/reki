@@ -77,17 +77,17 @@ insert(NameBin, Key, Value) ->
         error:badarg -> {error, nil}
     end.
 
--spec lookup(binary(), term()) -> {ok, term()} | {error, nil}.
+-spec lookup(binary(), term()) -> {some, term()} | none.
 lookup(NameBin, Key) ->
     try
         Name = binary_to_atom(NameBin),
         Tid = ets:whereis(Name),
         case ets:lookup(Tid, Key) of
-            [{Key, Value}] -> {ok, Value};
-            [] -> {error, nil}
+            [{Key, Value}] -> {some, Value};
+            [] -> none
         end
     catch
-        error:badarg -> {error, nil}
+        error:badarg -> none
     end.
 
 -spec delete(binary(), term()) -> {ok, nil} | {error, nil}.
