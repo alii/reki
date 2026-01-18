@@ -16,6 +16,7 @@ reki = { git = "git@github.com:alii/reki.git", ref = "<commit hash>" }
 ```gleam
 import gleam/erlang/process
 import gleam/list
+import gleam/option
 import gleam/otp/actor
 import gleam/otp/static_supervisor as supervisor
 import reki
@@ -66,6 +67,15 @@ pub fn main() {
     reki.lookup_or_start(channels, "general", start_channel)
 
   process.send(same_channel, Publish("Also hello!"))
+
+  // You can also lookup without starting
+  case reki.lookup(channels, "general") {
+    option.Some(channel) -> process.send(channel, Publish("Found it!"))
+    option.None -> {
+      // channel not found ...
+      todo
+    }
+  }
 }
 ```
 
