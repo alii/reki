@@ -67,10 +67,7 @@ fn insert_ets(
 ) -> Result(Nil, Nil)
 
 @external(erlang, "reki_ets_ffi", "lookup")
-fn lookup_ets(
-  name: String,
-  key: dynamic.Dynamic,
-) -> Option(dynamic.Dynamic)
+fn lookup_ets(name: String, key: dynamic.Dynamic) -> Option(dynamic.Dynamic)
 
 @external(erlang, "reki_ets_ffi", "delete")
 fn delete_ets(name: String, key: dynamic.Dynamic) -> Result(Nil, Nil)
