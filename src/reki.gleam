@@ -11,6 +11,20 @@ import reki/ets
 /// A registry that manages actors by key.
 /// Similar to Discord's gen_registry, this allows you to look up or start actors
 /// on demand, ensuring only one actor exists per key.
+///
+/// ## Architecture
+///
+/// Reki uses an ETS table for fast O(1) lookups, with a registry actor that
+/// handles process lifecycle (starting new actors, cleaning up dead ones).
+/// When a managed actor dies, reki receives an EXIT signal and removes the
+/// stale entry from ETS.
+///
+/// ## Stale entries
+///
+/// There's a brief window between when a process dies and when reki processes
+/// the EXIT signal. During this window, `lookup` or `lookup_or_start` may
+/// return a stale Subject pointing to a dead process. This is the tradeoff
+/// for fast O(1) lookups.
 pub opaque type Registry(key, msg) {
   Registry(
     registry_name: process.Name(RegistryMessage(key, msg)),
@@ -125,11 +139,15 @@ pub fn supervised(
   supervision.worker(fn() { start_registry_actor(registry) })
 }
 
-/// Looks up an actor by key in the registry, or starts it if it doesn't exist.
-/// This function ensures that only one actor exists per key, even if called
-/// concurrently from multiple processes.
-/// Lookups are synchronous via ETS, so no timeout is needed for existing entries.
-/// When starting a new actor, a default timeout of 5000ms is used.
+/// Looks up an actor by key, or starts one if it doesn't exist.
+///
+/// This is the primary function for getting an actor from the registry. It
+/// first checks ETS for an existing entry (fast O(1) lookup), and only goes
+/// through the registry actor if the key isn't found.
+///
+/// In rare cases, this may return a stale Subject if a process just died but
+/// reki hasn't processed the EXIT yet. If calling the returned Subject fails,
+/// retry with `lookup_or_start_slow`.
 pub fn lookup_or_start(
   registry: Registry(key, msg),
   key: key,
@@ -139,10 +157,12 @@ pub fn lookup_or_start(
   lookup_or_start_with_timeout(registry, key, start_fn, 5000)
 }
 
-/// Looks up an actor by key in the registry.
-/// Returns `None` if no actor exists for the given key.
-/// This function performs a synchronous lookup via ETS, so no timeout is needed.
-/// If you want to start the actor if it doesn't exist, use `lookup_or_start` instead.
+/// Looks up an actor by key in the registry, without starting one if missing.
+///
+/// Returns `None` if no actor exists for the given key. This is a direct ETS
+/// read, so it's fast but may return a stale Subject if a process just died.
+///
+/// Use `lookup_or_start` if you want to start an actor when the key is missing.
 pub fn lookup(
   registry: Registry(key, msg),
   key: key,
@@ -163,11 +183,31 @@ pub fn lookup_or_start_with_timeout(
 ) -> Result(process.Subject(msg), actor.StartError) {
   case lookup(registry, key) {
     Some(sub) -> Ok(sub)
-    None ->
-      actor.call(get_subject(registry), timeout, fn(reply_to) {
-        StartIfNotExists(key:, start_fn:, reply_to:)
-      })
+    None -> do_start(registry, key, start_fn, timeout)
   }
+}
+
+/// Like `lookup_or_start`, but skips ETS and goes directly through
+/// the registry actor. By going through the actor, any pending `EXIT`s
+/// in the registry's mailbox are processed first. This lets you block
+/// and synchronize with the registry.
+///
+/// **You probably don't need this function.** It serializes all requests
+/// through the registry actor, which becomes a bottleneck under load. Make
+/// sure you understand exactly why you need the ordering guarantee before
+/// using this. Read the docs on the `Registry` type to understand the
+/// architecture and tradeoffs.
+@internal
+pub fn do_start(
+  registry: Registry(key, msg),
+  key: key,
+  start_fn: fn(key) ->
+    Result(actor.Started(process.Subject(msg)), actor.StartError),
+  timeout: Int,
+) -> Result(process.Subject(msg), actor.StartError) {
+  actor.call(get_subject(registry), timeout, fn(reply_to) {
+    StartIfNotExists(key:, start_fn:, reply_to:)
+  })
 }
 
 @internal
