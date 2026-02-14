@@ -31,14 +31,6 @@ pub fn delete(
   delete_ets(table_id, key)
 }
 
-/// Delete using a dynamic key (useful when you have a dynamic key from another lookup).
-pub fn delete_using_dynamic(
-  key: key,
-  table_id: TableIdentifier(key, value),
-) -> Result(Nil, Nil) {
-  delete_ets(table_id, key)
-}
-
 // Public FFI
 
 /// Creates a unique atom for use as an ETS table name.

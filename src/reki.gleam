@@ -87,7 +87,7 @@ fn on_message(
     ProcessExited(pid:) -> {
       case pdict_delete(pid) {
         Ok(key_dynamic) -> {
-          let _ = ets.delete_using_dynamic(key_dynamic, table_id)
+          let _ = ets.delete(table_id, key_dynamic)
           Nil
         }
         Error(Nil) -> Nil
