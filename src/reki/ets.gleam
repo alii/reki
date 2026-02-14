@@ -1,25 +1,29 @@
 import gleam/dynamic
 import gleam/option.{type Option}
 
-/// An ETS table handle. Tables are named and can be accessed by name.
+/// An ETS table handle. Tables are named and accessed by their atom name.
+/// The name is typically shared with the registry actor's process name,
+/// so the table is owned by and dies with the actor.
 pub opaque type Table {
-  Table(name: String)
+  Table(name: dynamic.Dynamic)
 }
 
-/// Create a new named ETS table with the given name.
-pub fn new(name: String) -> Result(Table, Nil) {
-  case new_table(name) {
-    Ok(_) -> Ok(Table(name))
+/// Create a new named ETS table. The name should be an atom (e.g. a process.Name).
+/// The table is owned by the calling process and will be destroyed when it dies.
+pub fn new(name: name) -> Result(Table, Nil) {
+  let name_dynamic = to_dynamic(name)
+  case new_table(name_dynamic) {
+    Ok(_) -> Ok(Table(name_dynamic))
     Error(e) -> Error(e)
   }
 }
 
-/// Get an existing named ETS table, or create it if it doesn't exist.
-pub fn get_or_create(name: String) -> Result(Table, Nil) {
-  case get_or_create_table(name) {
-    Ok(_) -> Ok(Table(name))
-    Error(e) -> Error(e)
-  }
+/// Create a table handle from an existing name, without creating a new table.
+/// This is used to access a table that was already created by another process
+/// (e.g. the registry actor).
+@internal
+pub fn from_name(name: name) -> Table {
+  Table(to_dynamic(name))
 }
 
 /// Insert a key-value pair into the table.
@@ -30,12 +34,6 @@ pub fn insert(key: a, value: b, table: Table) -> Result(Nil, Nil) {
 /// Look up a value by key in the table, returning it as a Dynamic value.
 pub fn lookup_dynamic(key: a, table: Table) -> Option(dynamic.Dynamic) {
   lookup_ets(table.name, to_dynamic(key))
-}
-
-/// Look up a value by key using the table name directly.
-/// Returns None if the table doesn't exist or key not found.
-pub fn lookup_by_name(name: String, key: a) -> Option(dynamic.Dynamic) {
-  lookup_ets(name, to_dynamic(key))
 }
 
 /// Delete a key-value pair from the table.
@@ -54,23 +52,23 @@ pub fn delete_using_dynamic(
 // Internal FFI functions
 
 @external(erlang, "reki_ets_ffi", "new")
-fn new_table(name: String) -> Result(Nil, Nil)
-
-@external(erlang, "reki_ets_ffi", "get_or_create")
-fn get_or_create_table(name: String) -> Result(Nil, Nil)
+fn new_table(name: dynamic.Dynamic) -> Result(dynamic.Dynamic, Nil)
 
 @external(erlang, "reki_ets_ffi", "insert")
 fn insert_ets(
-  name: String,
+  name: dynamic.Dynamic,
   key: dynamic.Dynamic,
   value: dynamic.Dynamic,
 ) -> Result(Nil, Nil)
 
 @external(erlang, "reki_ets_ffi", "lookup")
-fn lookup_ets(name: String, key: dynamic.Dynamic) -> Option(dynamic.Dynamic)
+fn lookup_ets(
+  name: dynamic.Dynamic,
+  key: dynamic.Dynamic,
+) -> Option(dynamic.Dynamic)
 
 @external(erlang, "reki_ets_ffi", "delete")
-fn delete_ets(name: String, key: dynamic.Dynamic) -> Result(Nil, Nil)
+fn delete_ets(name: dynamic.Dynamic, key: dynamic.Dynamic) -> Result(Nil, Nil)
 
 @external(erlang, "reki_ets_ffi", "to_dynamic")
 fn to_dynamic(value: a) -> dynamic.Dynamic

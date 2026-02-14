@@ -1,7 +1,6 @@
 -module(reki_ets_ffi).
 -export([
     new/1,
-    get_or_create/1,
     insert/3,
     lookup/2,
     delete/2,
@@ -31,58 +30,33 @@ cast_subject(Value) ->
 to_dynamic(Value) ->
     Value.
 
--spec new(binary()) -> {ok, nil} | {error, nil}.
-new(NameBin) ->
+-spec new(atom()) -> {ok, reference()} | {error, nil}.
+new(Name) ->
     try
-        Name = binary_to_atom(NameBin),
-        _Tid = ets:new(Name, [
+        Tid = ets:new(Name, [
             set,
             named_table,
             public,
             {read_concurrency, true}
         ]),
+        {ok, Tid}
+    catch
+        error:badarg -> {error, nil}
+    end.
+
+-spec insert(atom(), term(), term()) -> {ok, nil} | {error, nil}.
+insert(Name, Key, Value) ->
+    try
+        ets:insert(Name, {Key, Value}),
         {ok, nil}
     catch
         error:badarg -> {error, nil}
     end.
 
--spec get_or_create(binary()) -> {ok, nil} | {error, nil}.
-get_or_create(NameBin) ->
+-spec lookup(atom(), term()) -> {some, term()} | none.
+lookup(Name, Key) ->
     try
-        Name = binary_to_atom(NameBin),
-        case ets:whereis(Name) of
-            undefined ->
-                _Tid = ets:new(Name, [
-                    set,
-                    named_table,
-                    public,
-                    {read_concurrency, true}
-                ]),
-                {ok, nil};
-            _Tid ->
-                {ok, nil}
-        end
-    catch
-        error:badarg -> {error, nil}
-    end.
-
--spec insert(binary(), term(), term()) -> {ok, nil} | {error, nil}.
-insert(NameBin, Key, Value) ->
-    try
-        Name = binary_to_atom(NameBin),
-        Tid = ets:whereis(Name),
-        ets:insert(Tid, {Key, Value}),
-        {ok, nil}
-    catch
-        error:badarg -> {error, nil}
-    end.
-
--spec lookup(binary(), term()) -> {some, term()} | none.
-lookup(NameBin, Key) ->
-    try
-        Name = binary_to_atom(NameBin),
-        Tid = ets:whereis(Name),
-        case ets:lookup(Tid, Key) of
+        case ets:lookup(Name, Key) of
             [{Key, Value}] -> {some, Value};
             [] -> none
         end
@@ -90,14 +64,11 @@ lookup(NameBin, Key) ->
         error:badarg -> none
     end.
 
--spec delete(binary(), term()) -> {ok, nil} | {error, nil}.
-delete(NameBin, Key) ->
+-spec delete(atom(), term()) -> {ok, nil} | {error, nil}.
+delete(Name, Key) ->
     try
-        Name = binary_to_atom(NameBin),
-        Tid = ets:whereis(Name),
-        ets:delete(Tid, Key),
+        ets:delete(Name, Key),
         {ok, nil}
     catch
         error:badarg -> {error, nil}
     end.
-

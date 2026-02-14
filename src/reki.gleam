@@ -1,11 +1,9 @@
 import gleam/dynamic
 import gleam/erlang/process
-import gleam/erlang/reference
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/otp/supervision
 import gleam/result
-import gleam/string
 import reki/ets
 
 /// A registry that manages actors by key.
@@ -19,6 +17,10 @@ import reki/ets
 /// When a managed actor dies, reki receives an EXIT signal and removes the
 /// stale entry from ETS.
 ///
+/// The ETS table is owned by the registry actor. If the actor crashes, the
+/// BEAM automatically destroys the table. When the supervisor restarts the
+/// actor, a fresh table is created — no stale entries from a previous life.
+///
 /// ## Stale entries
 ///
 /// There's a brief window between when a process dies and when reki processes
@@ -26,10 +28,7 @@ import reki/ets
 /// return a stale Subject pointing to a dead process. This is the tradeoff
 /// for fast O(1) lookups.
 pub opaque type Registry(key, msg) {
-  Registry(
-    registry_name: process.Name(RegistryMessage(key, msg)),
-    ets_table_name: String,
-  )
+  Registry(registry_name: process.Name(RegistryMessage(key, msg)))
 }
 
 pub opaque type RegistryMessage(key, msg) {
@@ -55,8 +54,12 @@ fn start_registry_actor(
   actor.new_with_initialiser(1000, fn(_) {
     process.trap_exits(True)
 
+    // Create a fresh ETS table owned by this actor. The table uses the same
+    // atom name as the actor's registered name, so callers can look up entries
+    // by name without needing the table reference. When this actor dies, the
+    // BEAM destroys the table automatically — no stale entries survive.
     use ets_table <- result.map(
-      ets.new(registry.ets_table_name)
+      ets.new(registry.registry_name)
       |> result.replace_error("Failed to create ETS table"),
     )
 
@@ -125,11 +128,7 @@ pub fn start(
 /// Create a registry. Call this at the start of your program before
 /// creating the supervision tree.
 pub fn new() -> Registry(key, msg) {
-  let unique_id = string.inspect(reference.new())
-  Registry(
-    registry_name: process.new_name("reki@" <> unique_id),
-    ets_table_name: "reki@" <> unique_id,
-  )
+  Registry(registry_name: process.new_name("reki"))
 }
 
 /// A specification for starting the registry under a supervisor.
@@ -167,7 +166,8 @@ pub fn lookup(
   registry: Registry(key, msg),
   key: key,
 ) -> Option(process.Subject(msg)) {
-  case ets.lookup_by_name(registry.ets_table_name, key) {
+  let table = ets.from_name(registry.registry_name)
+  case ets.lookup_dynamic(key, table) {
     Some(subject_dynamic) -> Some(cast_subject(subject_dynamic))
     None -> None
   }
