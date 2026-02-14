@@ -5,6 +5,7 @@ import gleam/otp/actor
 import gleam/otp/supervision
 import gleam/result
 import reki/ets
+import reki/internal
 
 /// A registry that manages actors by key.
 /// Similar to Discord's gen_registry, this allows you to look up or start actors
@@ -28,17 +29,13 @@ import reki/ets
 /// return a stale Subject pointing to a dead process. This is the tradeoff
 /// for fast O(1) lookups.
 
-/// An opaque type representing a unique atom used as an ETS table name.
-/// This is separate from `process.Name` — it is only used for ETS operations,
-/// never for actor registration.
-pub opaque type TableName {
-  TableName(name: dynamic.Dynamic)
-}
+pub type TableReference =
+  internal.TableReference
 
 pub opaque type Registry(key, msg) {
   Registry(
     registry_name: process.Name(RegistryMessage(key, msg)),
-    table_name: TableName,
+    table_name: internal.TableReference,
   )
 }
 
@@ -69,7 +66,7 @@ fn start_registry_actor(
     // dedicated table name (a unique atom). When this actor dies, the BEAM
     // destroys the table automatically — no stale entries survive.
     use ets_table <- result.map(
-      ets.new(registry.table_name.name)
+      ets.new(registry.table_name)
       |> result.replace_error("Failed to create ETS table"),
     )
 
@@ -140,7 +137,7 @@ pub fn start(
 pub fn new() -> Registry(key, msg) {
   Registry(
     registry_name: process.new_name("reki"),
-    table_name: TableName(name: new_unique_atom()),
+    table_name: internal.new_table_reference(),
   )
 }
 
@@ -179,7 +176,7 @@ pub fn lookup(
   registry: Registry(key, msg),
   key: key,
 ) -> Option(process.Subject(msg)) {
-  let table = ets.from_name(registry.table_name.name)
+  let table = ets.from_name(registry.table_name)
   case ets.lookup_dynamic(key, table) {
     Some(subject_dynamic) -> Some(cast_subject(subject_dynamic))
     None -> None
@@ -227,9 +224,6 @@ pub fn do_start(
 pub fn get_pid(registry: Registry(a, b)) -> Result(process.Pid, Nil) {
   get_subject(registry) |> process.subject_owner()
 }
-
-@external(erlang, "reki_ets_ffi", "new_unique_atom")
-fn new_unique_atom() -> dynamic.Dynamic
 
 @external(erlang, "reki_ets_ffi", "cast_subject")
 fn cast_subject(value: dynamic.Dynamic) -> process.Subject(msg)

@@ -1,17 +1,18 @@
 import gleam/dynamic
 import gleam/option.{type Option}
+import reki/internal.{type TableReference}
 
 /// An ETS table handle. Tables are named and accessed by their atom name.
 /// The name is typically shared with the registry actor's process name,
 /// so the table is owned by and dies with the actor.
 pub opaque type Table {
-  Table(name: dynamic.Dynamic)
+  Table(name: TableReference)
 }
 
 /// Create a new named ETS table. The name should be a dynamic atom value
 /// (e.g. from `new_unique_atom`).
 /// The table is owned by the calling process and will be destroyed when it dies.
-pub fn new(name: dynamic.Dynamic) -> Result(Table, Nil) {
+pub fn new(name: TableReference) -> Result(Table, Nil) {
   case new_table(name) {
     Ok(_) -> Ok(Table(name))
     Error(e) -> Error(e)
@@ -22,7 +23,7 @@ pub fn new(name: dynamic.Dynamic) -> Result(Table, Nil) {
 /// a new table. This is used to access a table that was already created by
 /// another process (e.g. the registry actor).
 @internal
-pub fn from_name(name: dynamic.Dynamic) -> Table {
+pub fn from_name(name: TableReference) -> Table {
   Table(name)
 }
 
@@ -52,23 +53,23 @@ pub fn delete_using_dynamic(
 // Internal FFI functions
 
 @external(erlang, "reki_ets_ffi", "new")
-fn new_table(name: dynamic.Dynamic) -> Result(dynamic.Dynamic, Nil)
+fn new_table(name: TableReference) -> Result(dynamic.Dynamic, Nil)
 
 @external(erlang, "reki_ets_ffi", "insert")
 fn insert_ets(
-  name: dynamic.Dynamic,
+  name: TableReference,
   key: dynamic.Dynamic,
   value: dynamic.Dynamic,
 ) -> Result(Nil, Nil)
 
 @external(erlang, "reki_ets_ffi", "lookup")
 fn lookup_ets(
-  name: dynamic.Dynamic,
+  name: TableReference,
   key: dynamic.Dynamic,
 ) -> Option(dynamic.Dynamic)
 
 @external(erlang, "reki_ets_ffi", "delete")
-fn delete_ets(name: dynamic.Dynamic, key: dynamic.Dynamic) -> Result(Nil, Nil)
+fn delete_ets(name: TableReference, key: dynamic.Dynamic) -> Result(Nil, Nil)
 
 @external(erlang, "reki_ets_ffi", "to_dynamic")
 fn to_dynamic(value: a) -> dynamic.Dynamic
