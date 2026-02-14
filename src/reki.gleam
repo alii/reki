@@ -1,11 +1,8 @@
-import gleam/dynamic
 import gleam/erlang/process
-import gleam/erlang/reference
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/otp/supervision
 import gleam/result
-import gleam/string
 import reki/ets
 
 /// A registry that manages actors by key.
@@ -19,6 +16,10 @@ import reki/ets
 /// When a managed actor dies, reki receives an EXIT signal and removes the
 /// stale entry from ETS.
 ///
+/// The ETS table is owned by the registry actor. If the actor crashes, the
+/// BEAM automatically destroys the table. When the supervisor restarts the
+/// actor, a fresh table is created — no stale entries from a previous life.
+///
 /// ## Stale entries
 ///
 /// There's a brief window between when a process dies and when reki processes
@@ -28,7 +29,7 @@ import reki/ets
 pub opaque type Registry(key, msg) {
   Registry(
     registry_name: process.Name(RegistryMessage(key, msg)),
-    ets_table_name: String,
+    table_name: ets.TableIdentifier(key, process.Subject(msg)),
   )
 }
 
@@ -55,19 +56,20 @@ fn start_registry_actor(
   actor.new_with_initialiser(1000, fn(_) {
     process.trap_exits(True)
 
-    use ets_table <- result.map(
-      ets.new(registry.ets_table_name)
-      |> result.replace_error("Failed to create ETS table"),
-    )
+    // Create a fresh ETS table owned by this actor, using the registry's
+    // dedicated table name (a unique atom). When this actor dies, the BEAM
+    // destroys the table automatically — no stale entries survive.
+    let _tid = ets.new(registry.table_name)
 
     let selector =
       process.new_selector()
       |> process.select(get_subject(registry))
       |> process.select_trapped_exits(fn(exit) { ProcessExited(exit.pid) })
 
-    actor.initialised(ets_table)
+    actor.initialised(registry.table_name)
     |> actor.selecting(selector)
     |> actor.returning(registry)
+    |> Ok
   })
   |> actor.on_message(on_message)
   |> actor.named(registry.registry_name)
@@ -75,39 +77,42 @@ fn start_registry_actor(
 }
 
 fn on_message(
-  ets_table: ets.Table,
+  table_id: ets.TableIdentifier(key, process.Subject(msg)),
   message: RegistryMessage(key, msg),
-) -> actor.Next(ets.Table, RegistryMessage(key, msg)) {
+) -> actor.Next(
+  ets.TableIdentifier(key, process.Subject(msg)),
+  RegistryMessage(key, msg),
+) {
   case message {
     ProcessExited(pid:) -> {
       case pdict_delete(pid) {
-        Ok(key_dynamic) -> {
-          let _ = ets.delete_using_dynamic(key_dynamic, ets_table)
+        Ok(key) -> {
+          let _ = ets.delete(table_id, key)
           Nil
         }
         Error(Nil) -> Nil
       }
 
-      actor.continue(ets_table)
+      actor.continue(table_id)
     }
 
     StartIfNotExists(key:, start_fn:, reply_to:) -> {
-      case ets.lookup_dynamic(key, ets_table) {
-        Some(subject_dynamic) -> {
-          process.send(reply_to, Ok(cast_subject(subject_dynamic)))
-          actor.continue(ets_table)
+      case ets.lookup(table_id, key) {
+        Some(subject) -> {
+          process.send(reply_to, Ok(subject))
+          actor.continue(table_id)
         }
         None -> {
           process.send(reply_to, {
             use started <- result.map(start_fn(key))
             let actor.Started(pid:, data: subject) = started
-            let assert Ok(Nil) = ets.insert(key, subject, ets_table)
+            let assert Ok(Nil) = ets.insert(table_id, key, subject)
             pdict_put(pid, key)
 
             subject
           })
 
-          actor.continue(ets_table)
+          actor.continue(table_id)
         }
       }
     }
@@ -124,11 +129,15 @@ pub fn start(
 
 /// Create a registry. Call this at the start of your program before
 /// creating the supervision tree.
+///
+/// **Important:** Each call creates a unique atom for the ETS table name.
+/// Atoms are never garbage collected by the BEAM, so this function must
+/// only be called a fixed number of times (e.g. once per registry at app
+/// startup). Do not call `new()` dynamically in a loop or on each request.
 pub fn new() -> Registry(key, msg) {
-  let unique_id = string.inspect(reference.new())
   Registry(
-    registry_name: process.new_name("reki@" <> unique_id),
-    ets_table_name: "reki@" <> unique_id,
+    registry_name: process.new_name("reki"),
+    table_name: ets.new_table_identifier(),
   )
 }
 
@@ -167,10 +176,7 @@ pub fn lookup(
   registry: Registry(key, msg),
   key: key,
 ) -> Option(process.Subject(msg)) {
-  case ets.lookup_by_name(registry.ets_table_name, key) {
-    Some(subject_dynamic) -> Some(cast_subject(subject_dynamic))
-    None -> None
-  }
+  ets.lookup(registry.table_name, key)
 }
 
 @internal
@@ -215,11 +221,8 @@ pub fn get_pid(registry: Registry(a, b)) -> Result(process.Pid, Nil) {
   get_subject(registry) |> process.subject_owner()
 }
 
-@external(erlang, "reki_ets_ffi", "cast_subject")
-fn cast_subject(value: dynamic.Dynamic) -> process.Subject(msg)
-
 @external(erlang, "reki_ets_ffi", "pdict_put")
 fn pdict_put(pid: process.Pid, key: key) -> Nil
 
 @external(erlang, "reki_ets_ffi", "pdict_delete")
-fn pdict_delete(pid: process.Pid) -> Result(dynamic.Dynamic, Nil)
+fn pdict_delete(pid: process.Pid) -> Result(key, Nil)

@@ -1,76 +1,57 @@
-import gleam/dynamic
 import gleam/option.{type Option}
 
-/// An ETS table handle. Tables are named and can be accessed by name.
-pub opaque type Table {
-  Table(name: String)
-}
+/// A unique atom used as an ETS table name
+pub type TableIdentifier(key, value)
 
-/// Create a new named ETS table with the given name.
-pub fn new(name: String) -> Result(Table, Nil) {
-  case new_table(name) {
-    Ok(_) -> Ok(Table(name))
-    Error(e) -> Error(e)
-  }
-}
-
-/// Get an existing named ETS table, or create it if it doesn't exist.
-pub fn get_or_create(name: String) -> Result(Table, Nil) {
-  case get_or_create_table(name) {
-    Ok(_) -> Ok(Table(name))
-    Error(e) -> Error(e)
-  }
-}
+/// A reference to an ETS table (the tid returned by ets:new/2)
+pub type Tid
 
 /// Insert a key-value pair into the table.
-pub fn insert(key: a, value: b, table: Table) -> Result(Nil, Nil) {
-  insert_ets(table.name, to_dynamic(key), to_dynamic(value))
+pub fn insert(
+  table_id: TableIdentifier(key, value),
+  key: key,
+  value: value,
+) -> Result(Nil, Nil) {
+  insert_ets(table_id, key, value)
 }
 
-/// Look up a value by key in the table, returning it as a Dynamic value.
-pub fn lookup_dynamic(key: a, table: Table) -> Option(dynamic.Dynamic) {
-  lookup_ets(table.name, to_dynamic(key))
-}
-
-/// Look up a value by key using the table name directly.
-/// Returns None if the table doesn't exist or key not found.
-pub fn lookup_by_name(name: String, key: a) -> Option(dynamic.Dynamic) {
-  lookup_ets(name, to_dynamic(key))
+/// Look up a value by key in the table.
+pub fn lookup(table_id: TableIdentifier(key, value), key: key) -> Option(value) {
+  lookup_ets(table_id, key)
 }
 
 /// Delete a key-value pair from the table.
-pub fn delete(key: a, table: Table) -> Result(Nil, Nil) {
-  delete_ets(table.name, to_dynamic(key))
-}
-
-/// Delete using a dynamic key (useful when you have a dynamic key from another lookup).
-pub fn delete_using_dynamic(
-  key: dynamic.Dynamic,
-  table: Table,
+pub fn delete(
+  table_id: TableIdentifier(key, value),
+  key: key,
 ) -> Result(Nil, Nil) {
-  delete_ets(table.name, key)
+  delete_ets(table_id, key)
 }
 
-// Internal FFI functions
+// Public FFI
 
+/// Creates a unique atom for use as an ETS table name.
+/// WARNING: Atoms are never garbage collected by the BEAM. Only call this
+/// a fixed number of times (e.g. once per registry at app startup).
+@external(erlang, "reki_ets_ffi", "new_unique_atom")
+pub fn new_table_identifier() -> TableIdentifier(key, value)
+
+/// Creates a new named ETS table. Crashes if the name is already taken.
+/// The table is owned by the calling process and will be destroyed when it dies.
 @external(erlang, "reki_ets_ffi", "new")
-fn new_table(name: String) -> Result(Nil, Nil)
+pub fn new(table_id: TableIdentifier(key, value)) -> Tid
 
-@external(erlang, "reki_ets_ffi", "get_or_create")
-fn get_or_create_table(name: String) -> Result(Nil, Nil)
+// Private FFI
 
 @external(erlang, "reki_ets_ffi", "insert")
 fn insert_ets(
-  name: String,
-  key: dynamic.Dynamic,
-  value: dynamic.Dynamic,
+  name: TableIdentifier(key, value),
+  key: key,
+  value: value,
 ) -> Result(Nil, Nil)
 
 @external(erlang, "reki_ets_ffi", "lookup")
-fn lookup_ets(name: String, key: dynamic.Dynamic) -> Option(dynamic.Dynamic)
+fn lookup_ets(name: TableIdentifier(key, value), key: key) -> Option(value)
 
 @external(erlang, "reki_ets_ffi", "delete")
-fn delete_ets(name: String, key: dynamic.Dynamic) -> Result(Nil, Nil)
-
-@external(erlang, "reki_ets_ffi", "to_dynamic")
-fn to_dynamic(value: a) -> dynamic.Dynamic
+fn delete_ets(name: TableIdentifier(key, value), key: key) -> Result(Nil, Nil)
