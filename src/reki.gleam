@@ -176,10 +176,7 @@ pub fn lookup(
   registry: Registry(key, msg),
   key: key,
 ) -> Option(process.Subject(msg)) {
-  case ets.lookup(registry.table_name, key) {
-    Some(subject_dynamic) -> Some(subject_dynamic)
-    None -> None
-  }
+  ets.lookup(registry.table_name, key)
 }
 
 @internal
