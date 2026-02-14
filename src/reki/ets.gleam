@@ -7,44 +7,38 @@ import gleam/option.{type Option}
 /// used for ETS operations, never for actor registration.
 pub type TableIdentifier
 
-/// An ETS table handle. Tables are named and accessed by their atom name.
-/// The name is typically shared with the registry actor's process name,
-/// so the table is owned by and dies with the actor.
-pub type Table {
-  Table(name: TableIdentifier)
-}
-
 /// Create a new named ETS table. The name should be a dynamic atom value
 /// (e.g. from `new_unique_atom`).
 /// The table is owned by the calling process and will be destroyed when it dies.
-pub fn new(name: TableIdentifier) -> Result(Table, Nil) {
-  case new_table(name) {
-    Ok(_) -> Ok(Table(name))
-    Error(e) -> Error(e)
-  }
+/// Returns the tid on success (which can be ignored for named tables).
+pub fn new(name: TableIdentifier) -> Result(dynamic.Dynamic, Nil) {
+  new_table(name)
 }
 
 /// Insert a key-value pair into the table.
-pub fn insert(key: a, value: b, table: Table) -> Result(Nil, Nil) {
-  insert_ets(table.name, to_dynamic(key), to_dynamic(value))
+pub fn insert(key: a, value: b, table_id: TableIdentifier) -> Result(Nil, Nil) {
+  insert_ets(table_id, to_dynamic(key), to_dynamic(value))
 }
 
 /// Look up a value by key in the table, returning it as a Dynamic value.
-pub fn lookup_dynamic(key: a, table: Table) -> Option(dynamic.Dynamic) {
-  lookup_ets(table.name, to_dynamic(key))
+pub fn lookup_dynamic(
+  key: a,
+  table_id: TableIdentifier,
+) -> Option(dynamic.Dynamic) {
+  lookup_ets(table_id, to_dynamic(key))
 }
 
 /// Delete a key-value pair from the table.
-pub fn delete(key: a, table: Table) -> Result(Nil, Nil) {
-  delete_ets(table.name, to_dynamic(key))
+pub fn delete(key: a, table_id: TableIdentifier) -> Result(Nil, Nil) {
+  delete_ets(table_id, to_dynamic(key))
 }
 
 /// Delete using a dynamic key (useful when you have a dynamic key from another lookup).
 pub fn delete_using_dynamic(
   key: dynamic.Dynamic,
-  table: Table,
+  table_id: TableIdentifier,
 ) -> Result(Nil, Nil) {
-  delete_ets(table.name, key)
+  delete_ets(table_id, key)
 }
 
 // Internal FFI functions

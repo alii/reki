@@ -60,7 +60,7 @@ fn start_registry_actor(
     // Create a fresh ETS table owned by this actor, using the registry's
     // dedicated table name (a unique atom). When this actor dies, the BEAM
     // destroys the table automatically — no stale entries survive.
-    use ets_table <- result.map(
+    use _tid <- result.map(
       ets.new(registry.table_name)
       |> result.replace_error("Failed to create ETS table"),
     )
@@ -70,7 +70,7 @@ fn start_registry_actor(
       |> process.select(get_subject(registry))
       |> process.select_trapped_exits(fn(exit) { ProcessExited(exit.pid) })
 
-    actor.initialised(ets_table)
+    actor.initialised(registry.table_name)
     |> actor.selecting(selector)
     |> actor.returning(registry)
   })
@@ -80,39 +80,39 @@ fn start_registry_actor(
 }
 
 fn on_message(
-  ets_table: ets.Table,
+  table_id: ets.TableIdentifier,
   message: RegistryMessage(key, msg),
-) -> actor.Next(ets.Table, RegistryMessage(key, msg)) {
+) -> actor.Next(ets.TableIdentifier, RegistryMessage(key, msg)) {
   case message {
     ProcessExited(pid:) -> {
       case pdict_delete(pid) {
         Ok(key_dynamic) -> {
-          let _ = ets.delete_using_dynamic(key_dynamic, ets_table)
+          let _ = ets.delete_using_dynamic(key_dynamic, table_id)
           Nil
         }
         Error(Nil) -> Nil
       }
 
-      actor.continue(ets_table)
+      actor.continue(table_id)
     }
 
     StartIfNotExists(key:, start_fn:, reply_to:) -> {
-      case ets.lookup_dynamic(key, ets_table) {
+      case ets.lookup_dynamic(key, table_id) {
         Some(subject_dynamic) -> {
           process.send(reply_to, Ok(cast_subject(subject_dynamic)))
-          actor.continue(ets_table)
+          actor.continue(table_id)
         }
         None -> {
           process.send(reply_to, {
             use started <- result.map(start_fn(key))
             let actor.Started(pid:, data: subject) = started
-            let assert Ok(Nil) = ets.insert(key, subject, ets_table)
+            let assert Ok(Nil) = ets.insert(key, subject, table_id)
             pdict_put(pid, key)
 
             subject
           })
 
-          actor.continue(ets_table)
+          actor.continue(table_id)
         }
       }
     }
@@ -176,8 +176,7 @@ pub fn lookup(
   registry: Registry(key, msg),
   key: key,
 ) -> Option(process.Subject(msg)) {
-  let table = ets.Table(registry.table_name)
-  case ets.lookup_dynamic(key, table) {
+  case ets.lookup_dynamic(key, registry.table_name) {
     Some(subject_dynamic) -> Some(cast_subject(subject_dynamic))
     None -> None
   }
