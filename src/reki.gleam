@@ -60,7 +60,7 @@ fn start_registry_actor(
     // Create a fresh ETS table owned by this actor, using the registry's
     // dedicated table name (a unique atom). When this actor dies, the BEAM
     // destroys the table automatically — no stale entries survive.
-    ets.new(registry.table_name)
+    let _tid = ets.new(registry.table_name)
 
     let selector =
       process.new_selector()

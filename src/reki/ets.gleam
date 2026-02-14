@@ -7,15 +7,15 @@ import gleam/option.{type Option}
 /// used for ETS operations, never for actor registration.
 pub type TableIdentifier
 
-/// Create a new named ETS table. The name should be a dynamic atom value
-/// (e.g. from `new_unique_atom`).
+/// A reference to an ETS table (the tid returned by ets:new/2).
+/// This is a phantom type with no constructors — it can only be
+/// created via the FFI.
+pub type Tid
+
+/// Creates a new named ETS table. Crashes if the name is already taken.
 /// The table is owned by the calling process and will be destroyed when it dies.
-/// Crashes if the table already exists — a name collision with unique atoms
-/// means something is fundamentally broken.
-pub fn new(table_id: TableIdentifier) -> Nil {
-  let assert Ok(_) = new_table(table_id)
-  Nil
-}
+@external(erlang, "reki_ets_ffi", "new")
+pub fn new(table_id: TableIdentifier) -> Tid
 
 /// Insert a key-value pair into the table.
 pub fn insert(key: a, value: b, table_id: TableIdentifier) -> Result(Nil, Nil) {
@@ -44,9 +44,6 @@ pub fn delete_using_dynamic(
 }
 
 // Internal FFI functions
-
-@external(erlang, "reki_ets_ffi", "new")
-fn new_table(name: TableIdentifier) -> Result(dynamic.Dynamic, Nil)
 
 @external(erlang, "reki_ets_ffi", "insert")
 fn insert_ets(

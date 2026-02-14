@@ -42,19 +42,9 @@ new_unique_atom() ->
 to_dynamic(Value) ->
     Value.
 
--spec new(atom()) -> {ok, reference()} | {error, nil}.
+-spec new(atom()) -> reference().
 new(Name) ->
-    try
-        Tid = ets:new(Name, [
-            set,
-            named_table,
-            public,
-            {read_concurrency, true}
-        ]),
-        {ok, Tid}
-    catch
-        error:badarg -> {error, nil}
-    end.
+    ets:new(Name, [set, named_table, public, {read_concurrency, true}]).
 
 -spec insert(atom(), term(), term()) -> {ok, nil} | {error, nil}.
 insert(Name, Key, Value) ->
