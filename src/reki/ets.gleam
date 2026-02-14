@@ -7,12 +7,6 @@ import gleam/option.{type Option}
 /// used for ETS operations, never for actor registration.
 pub type TableIdentifier
 
-/// Creates a unique atom for use as an ETS table name.
-/// WARNING: Atoms are never garbage collected by the BEAM. Only call this
-/// a fixed number of times (e.g. once per registry at app startup).
-@external(erlang, "reki_ets_ffi", "new_unique_atom")
-pub fn new_table_identifier() -> TableIdentifier
-
 /// An ETS table handle. Tables are named and accessed by their atom name.
 /// The name is typically shared with the registry actor's process name,
 /// so the table is owned by and dies with the actor.
@@ -76,3 +70,9 @@ fn delete_ets(name: TableIdentifier, key: dynamic.Dynamic) -> Result(Nil, Nil)
 
 @external(erlang, "reki_ets_ffi", "to_dynamic")
 fn to_dynamic(value: a) -> dynamic.Dynamic
+
+/// Creates a unique atom for use as an ETS table name.
+/// WARNING: Atoms are never garbage collected by the BEAM. Only call this
+/// a fixed number of times (e.g. once per registry at app startup).
+@external(erlang, "reki_ets_ffi", "new_unique_atom")
+pub fn new_table_identifier() -> TableIdentifier
