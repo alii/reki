@@ -1,34 +1,40 @@
-import gleam/dynamic
 import gleam/option.{type Option}
 
 /// A unique atom used as an ETS table name
-pub type TableIdentifier
+pub type TableIdentifier(key, value)
 
 /// A reference to an ETS table (the tid returned by ets:new/2)
 pub type Tid
 
 /// Insert a key-value pair into the table.
-pub fn insert(key: a, value: b, table_id: TableIdentifier) -> Result(Nil, Nil) {
-  insert_ets(table_id, to_dynamic(key), to_dynamic(value))
+pub fn insert(
+  table_id: TableIdentifier(key, value),
+  key: key,
+  value: value,
+) -> Result(Nil, Nil) {
+  insert_ets(table_id, key, value)
 }
 
 /// Look up a value by key in the table, returning it as a Dynamic value.
 pub fn lookup_dynamic(
-  key: a,
-  table_id: TableIdentifier,
-) -> Option(dynamic.Dynamic) {
-  lookup_ets(table_id, to_dynamic(key))
+  table_id: TableIdentifier(key, value),
+  key: key,
+) -> Option(value) {
+  lookup_ets(table_id, key)
 }
 
 /// Delete a key-value pair from the table.
-pub fn delete(key: a, table_id: TableIdentifier) -> Result(Nil, Nil) {
-  delete_ets(table_id, to_dynamic(key))
+pub fn delete(
+  table_id: TableIdentifier(key, value),
+  key: key,
+) -> Result(Nil, Nil) {
+  delete_ets(table_id, key)
 }
 
 /// Delete using a dynamic key (useful when you have a dynamic key from another lookup).
 pub fn delete_using_dynamic(
-  key: dynamic.Dynamic,
-  table_id: TableIdentifier,
+  key: key,
+  table_id: TableIdentifier(key, value),
 ) -> Result(Nil, Nil) {
   delete_ets(table_id, key)
 }
@@ -39,30 +45,24 @@ pub fn delete_using_dynamic(
 /// WARNING: Atoms are never garbage collected by the BEAM. Only call this
 /// a fixed number of times (e.g. once per registry at app startup).
 @external(erlang, "reki_ets_ffi", "new_unique_atom")
-pub fn new_table_identifier() -> TableIdentifier
+pub fn new_table_identifier() -> TableIdentifier(key, value)
 
 /// Creates a new named ETS table. Crashes if the name is already taken.
 /// The table is owned by the calling process and will be destroyed when it dies.
 @external(erlang, "reki_ets_ffi", "new")
-pub fn new(table_id: TableIdentifier) -> Tid
+pub fn new(table_id: TableIdentifier(key, value)) -> Tid
 
 // Private FFI
 
 @external(erlang, "reki_ets_ffi", "insert")
 fn insert_ets(
-  name: TableIdentifier,
-  key: dynamic.Dynamic,
-  value: dynamic.Dynamic,
+  name: TableIdentifier(key, value),
+  key: key,
+  value: value,
 ) -> Result(Nil, Nil)
 
 @external(erlang, "reki_ets_ffi", "lookup")
-fn lookup_ets(
-  name: TableIdentifier,
-  key: dynamic.Dynamic,
-) -> Option(dynamic.Dynamic)
+fn lookup_ets(name: TableIdentifier(key, value), key: key) -> Option(value)
 
 @external(erlang, "reki_ets_ffi", "delete")
-fn delete_ets(name: TableIdentifier, key: dynamic.Dynamic) -> Result(Nil, Nil)
-
-@external(erlang, "reki_ets_ffi", "to_dynamic")
-fn to_dynamic(value: a) -> dynamic.Dynamic
+fn delete_ets(name: TableIdentifier(key, value), key: key) -> Result(Nil, Nil)

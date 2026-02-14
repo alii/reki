@@ -1,4 +1,3 @@
-import gleam/dynamic
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
@@ -30,7 +29,7 @@ import reki/ets
 pub opaque type Registry(key, msg) {
   Registry(
     registry_name: process.Name(RegistryMessage(key, msg)),
-    table_name: ets.TableIdentifier,
+    table_name: ets.TableIdentifier(key, process.Subject(msg)),
   )
 }
 
@@ -78,9 +77,12 @@ fn start_registry_actor(
 }
 
 fn on_message(
-  table_id: ets.TableIdentifier,
+  table_id: ets.TableIdentifier(key, process.Subject(msg)),
   message: RegistryMessage(key, msg),
-) -> actor.Next(ets.TableIdentifier, RegistryMessage(key, msg)) {
+) -> actor.Next(
+  ets.TableIdentifier(key, process.Subject(msg)),
+  RegistryMessage(key, msg),
+) {
   case message {
     ProcessExited(pid:) -> {
       case pdict_delete(pid) {
@@ -95,16 +97,16 @@ fn on_message(
     }
 
     StartIfNotExists(key:, start_fn:, reply_to:) -> {
-      case ets.lookup_dynamic(key, table_id) {
+      case ets.lookup_dynamic(table_id, key) {
         Some(subject_dynamic) -> {
-          process.send(reply_to, Ok(cast_subject(subject_dynamic)))
+          process.send(reply_to, Ok(subject_dynamic))
           actor.continue(table_id)
         }
         None -> {
           process.send(reply_to, {
             use started <- result.map(start_fn(key))
             let actor.Started(pid:, data: subject) = started
-            let assert Ok(Nil) = ets.insert(key, subject, table_id)
+            let assert Ok(Nil) = ets.insert(table_id, key, subject)
             pdict_put(pid, key)
 
             subject
@@ -174,8 +176,8 @@ pub fn lookup(
   registry: Registry(key, msg),
   key: key,
 ) -> Option(process.Subject(msg)) {
-  case ets.lookup_dynamic(key, registry.table_name) {
-    Some(subject_dynamic) -> Some(cast_subject(subject_dynamic))
+  case ets.lookup_dynamic(registry.table_name, key) {
+    Some(subject_dynamic) -> Some(subject_dynamic)
     None -> None
   }
 }
@@ -222,11 +224,8 @@ pub fn get_pid(registry: Registry(a, b)) -> Result(process.Pid, Nil) {
   get_subject(registry) |> process.subject_owner()
 }
 
-@external(erlang, "reki_ets_ffi", "cast_subject")
-fn cast_subject(value: dynamic.Dynamic) -> process.Subject(msg)
-
 @external(erlang, "reki_ets_ffi", "pdict_put")
 fn pdict_put(pid: process.Pid, key: key) -> Nil
 
 @external(erlang, "reki_ets_ffi", "pdict_delete")
-fn pdict_delete(pid: process.Pid) -> Result(dynamic.Dynamic, Nil)
+fn pdict_delete(pid: process.Pid) -> Result(key, Nil)
