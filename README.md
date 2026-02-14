@@ -4,11 +4,8 @@ A Gleam actor registry that manages actors by key, similar to Discord's [gen_reg
 
 ## Installation
 
-Add to your `gleam.toml` as a git dependency:
-
-```toml
-[dependencies]
-reki = { git = "git@github.com:alii/reki.git", ref = "<commit hash>" }
+```sh
+gleam add reki
 ```
 
 ## Usage
