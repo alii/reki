@@ -4,8 +4,6 @@
     insert/3,
     lookup/2,
     delete/2,
-    to_dynamic/1,
-    cast_subject/1,
     pdict_put/2,
     pdict_delete/1,
     new_unique_atom/0
@@ -23,10 +21,6 @@ pdict_delete(Key) ->
         Value -> {ok, Value}
     end.
 
--spec cast_subject(term()) -> term().
-cast_subject(Value) ->
-    Value.
-
 %% Creates a unique atom for use as an ETS table name.
 %% WARNING: Atoms are never garbage collected by the BEAM. This function
 %% must only be called a bounded number of times (e.g. at app startup).
@@ -38,11 +32,7 @@ new_unique_atom() ->
     Name = <<"reki$", Suffix/bits>>,
     binary_to_atom(Name).
 
--spec to_dynamic(term()) -> term().
-to_dynamic(Value) ->
-    Value.
-
--spec new(atom()) -> reference().
+-spec new(atom()) -> atom().
 new(Name) ->
     ets:new(Name, [set, named_table, public, {read_concurrency, true}]).
 
