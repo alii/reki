@@ -133,6 +133,11 @@ pub fn start(
 
 /// Create a registry. Call this at the start of your program before
 /// creating the supervision tree.
+///
+/// **Important:** Each call creates a unique atom for the ETS table name.
+/// Atoms are never garbage collected by the BEAM, so this function must
+/// only be called a fixed number of times (e.g. once per registry at app
+/// startup). Do not call `new()` dynamically in a loop or on each request.
 pub fn new() -> Registry(key, msg) {
   Registry(
     registry_name: process.new_name("reki"),

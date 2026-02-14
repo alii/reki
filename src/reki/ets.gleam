@@ -7,6 +7,9 @@ import gleam/option.{type Option}
 /// used for ETS operations, never for actor registration.
 pub type TableIdentifier
 
+/// Creates a unique atom for use as an ETS table name.
+/// WARNING: Atoms are never garbage collected by the BEAM. Only call this
+/// a fixed number of times (e.g. once per registry at app startup).
 @external(erlang, "reki_ets_ffi", "new_unique_atom")
 pub fn new_table_identifier() -> TableIdentifier
 

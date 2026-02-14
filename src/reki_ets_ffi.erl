@@ -27,6 +27,11 @@ pdict_delete(Key) ->
 cast_subject(Value) ->
     Value.
 
+%% Creates a unique atom for use as an ETS table name.
+%% WARNING: Atoms are never garbage collected by the BEAM. This function
+%% must only be called a bounded number of times (e.g. at app startup).
+%% Calling it in a loop or dynamically will eventually exhaust the atom
+%% table and crash the VM.
 -spec new_unique_atom() -> atom().
 new_unique_atom() ->
     Suffix = integer_to_binary(erlang:unique_integer([positive])),
