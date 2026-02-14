@@ -67,11 +67,10 @@ fn start_registry_actor(
       |> process.select(get_subject(registry))
       |> process.select_trapped_exits(fn(exit) { ProcessExited(exit.pid) })
 
-    Ok(
-      actor.initialised(registry.table_name)
-      |> actor.selecting(selector)
-      |> actor.returning(registry),
-    )
+    actor.initialised(registry.table_name)
+    |> actor.selecting(selector)
+    |> actor.returning(registry)
+    |> Ok
   })
   |> actor.on_message(on_message)
   |> actor.named(registry.registry_name)
