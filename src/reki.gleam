@@ -60,19 +60,18 @@ fn start_registry_actor(
     // Create a fresh ETS table owned by this actor, using the registry's
     // dedicated table name (a unique atom). When this actor dies, the BEAM
     // destroys the table automatically — no stale entries survive.
-    use _tid <- result.map(
-      ets.new(registry.table_name)
-      |> result.replace_error("Failed to create ETS table"),
-    )
+    ets.new(registry.table_name)
 
     let selector =
       process.new_selector()
       |> process.select(get_subject(registry))
       |> process.select_trapped_exits(fn(exit) { ProcessExited(exit.pid) })
 
-    actor.initialised(registry.table_name)
-    |> actor.selecting(selector)
-    |> actor.returning(registry)
+    Ok(
+      actor.initialised(registry.table_name)
+      |> actor.selecting(selector)
+      |> actor.returning(registry),
+    )
   })
   |> actor.on_message(on_message)
   |> actor.named(registry.registry_name)

@@ -10,9 +10,11 @@ pub type TableIdentifier
 /// Create a new named ETS table. The name should be a dynamic atom value
 /// (e.g. from `new_unique_atom`).
 /// The table is owned by the calling process and will be destroyed when it dies.
-/// Returns the tid on success (which can be ignored for named tables).
-pub fn new(name: TableIdentifier) -> Result(dynamic.Dynamic, Nil) {
-  new_table(name)
+/// Crashes if the table already exists — a name collision with unique atoms
+/// means something is fundamentally broken.
+pub fn new(table_id: TableIdentifier) -> Nil {
+  let assert Ok(_) = new_table(table_id)
+  Nil
 }
 
 /// Insert a key-value pair into the table.
