@@ -7,6 +7,12 @@ import gleam/string
 import gleeunit
 import reki
 
+@external(erlang, "reki_test_ffi", "which_children")
+fn which_children(pid: process.Pid) -> List(process.Pid)
+
+@external(erlang, "reki_test_ffi", "count_children")
+fn count_children(pid: process.Pid) -> Int
+
 pub fn main() -> Nil {
   gleeunit.main()
 }
@@ -1008,4 +1014,33 @@ pub fn two_registries_are_independent_test() {
   let assert Ok(_) =
     reki.lookup_or_start(registry_b, "only_in_b", test_start_fn)
   let assert option.None = reki.lookup(registry_a, "only_in_b")
+}
+
+pub fn otp_which_children_test() {
+  let registry = create_registry()
+
+  let assert Ok(actor1) = reki.lookup_or_start(registry, "key1", test_start_fn)
+  let assert Ok(actor2) = reki.lookup_or_start(registry, "key2", test_start_fn)
+  let assert Ok(actor3) = reki.lookup_or_start(registry, "key3", test_start_fn)
+
+  let assert Ok(registry_pid) = reki.get_pid(registry)
+  let child_pids = which_children(registry_pid)
+
+  assert list.length(child_pids) == 3
+  assert list.contains(child_pids, get_pid(actor1))
+  assert list.contains(child_pids, get_pid(actor2))
+  assert list.contains(child_pids, get_pid(actor3))
+}
+
+pub fn otp_count_children_test() {
+  let registry = create_registry()
+
+  let assert Ok(registry_pid) = reki.get_pid(registry)
+  assert count_children(registry_pid) == 0
+
+  let assert Ok(_) = reki.lookup_or_start(registry, "key1", test_start_fn)
+  let assert Ok(_) = reki.lookup_or_start(registry, "key2", test_start_fn)
+  let assert Ok(_) = reki.lookup_or_start(registry, "key3", test_start_fn)
+
+  assert count_children(registry_pid) == 3
 }
