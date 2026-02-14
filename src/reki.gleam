@@ -86,8 +86,8 @@ fn on_message(
   case message {
     ProcessExited(pid:) -> {
       case pdict_delete(pid) {
-        Ok(key_dynamic) -> {
-          let _ = ets.delete(table_id, key_dynamic)
+        Ok(key) -> {
+          let _ = ets.delete(table_id, key)
           Nil
         }
         Error(Nil) -> Nil
@@ -98,8 +98,8 @@ fn on_message(
 
     StartIfNotExists(key:, start_fn:, reply_to:) -> {
       case ets.lookup(table_id, key) {
-        Some(subject_dynamic) -> {
-          process.send(reply_to, Ok(subject_dynamic))
+        Some(subject) -> {
+          process.send(reply_to, Ok(subject))
           actor.continue(table_id)
         }
         None -> {
