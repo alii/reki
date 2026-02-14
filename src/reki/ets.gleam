@@ -8,22 +8,22 @@ pub opaque type Table {
   Table(name: dynamic.Dynamic)
 }
 
-/// Create a new named ETS table. The name should be an atom (e.g. a process.Name).
+/// Create a new named ETS table. The name should be a dynamic atom value
+/// (e.g. from `new_unique_atom`).
 /// The table is owned by the calling process and will be destroyed when it dies.
-pub fn new(name: name) -> Result(Table, Nil) {
-  let name_dynamic = to_dynamic(name)
-  case new_table(name_dynamic) {
-    Ok(_) -> Ok(Table(name_dynamic))
+pub fn new(name: dynamic.Dynamic) -> Result(Table, Nil) {
+  case new_table(name) {
+    Ok(_) -> Ok(Table(name))
     Error(e) -> Error(e)
   }
 }
 
-/// Create a table handle from an existing name, without creating a new table.
-/// This is used to access a table that was already created by another process
-/// (e.g. the registry actor).
+/// Create a table handle from an existing dynamic atom name, without creating
+/// a new table. This is used to access a table that was already created by
+/// another process (e.g. the registry actor).
 @internal
-pub fn from_name(name: name) -> Table {
-  Table(to_dynamic(name))
+pub fn from_name(name: dynamic.Dynamic) -> Table {
+  Table(name)
 }
 
 /// Insert a key-value pair into the table.

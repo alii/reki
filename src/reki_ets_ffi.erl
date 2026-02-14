@@ -7,7 +7,8 @@
     to_dynamic/1,
     cast_subject/1,
     pdict_put/2,
-    pdict_delete/1
+    pdict_delete/1,
+    new_unique_atom/0
 ]).
 
 -spec pdict_put(term(), term()) -> nil.
@@ -25,6 +26,12 @@ pdict_delete(Key) ->
 -spec cast_subject(term()) -> term().
 cast_subject(Value) ->
     Value.
+
+-spec new_unique_atom() -> atom().
+new_unique_atom() ->
+    Suffix = integer_to_binary(erlang:unique_integer([positive])),
+    Name = <<"reki$", Suffix/bits>>,
+    binary_to_atom(Name).
 
 -spec to_dynamic(term()) -> term().
 to_dynamic(Value) ->

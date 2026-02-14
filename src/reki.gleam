@@ -27,8 +27,19 @@ import reki/ets
 /// the EXIT signal. During this window, `lookup` or `lookup_or_start` may
 /// return a stale Subject pointing to a dead process. This is the tradeoff
 /// for fast O(1) lookups.
+
+/// An opaque type representing a unique atom used as an ETS table name.
+/// This is separate from `process.Name` — it is only used for ETS operations,
+/// never for actor registration.
+pub opaque type TableName {
+  TableName(name: dynamic.Dynamic)
+}
+
 pub opaque type Registry(key, msg) {
-  Registry(registry_name: process.Name(RegistryMessage(key, msg)))
+  Registry(
+    registry_name: process.Name(RegistryMessage(key, msg)),
+    table_name: TableName,
+  )
 }
 
 pub opaque type RegistryMessage(key, msg) {
@@ -54,12 +65,11 @@ fn start_registry_actor(
   actor.new_with_initialiser(1000, fn(_) {
     process.trap_exits(True)
 
-    // Create a fresh ETS table owned by this actor. The table uses the same
-    // atom name as the actor's registered name, so callers can look up entries
-    // by name without needing the table reference. When this actor dies, the
-    // BEAM destroys the table automatically — no stale entries survive.
+    // Create a fresh ETS table owned by this actor, using the registry's
+    // dedicated table name (a unique atom). When this actor dies, the BEAM
+    // destroys the table automatically — no stale entries survive.
     use ets_table <- result.map(
-      ets.new(registry.registry_name)
+      ets.new(registry.table_name.name)
       |> result.replace_error("Failed to create ETS table"),
     )
 
@@ -128,7 +138,10 @@ pub fn start(
 /// Create a registry. Call this at the start of your program before
 /// creating the supervision tree.
 pub fn new() -> Registry(key, msg) {
-  Registry(registry_name: process.new_name("reki"))
+  Registry(
+    registry_name: process.new_name("reki"),
+    table_name: TableName(name: new_unique_atom()),
+  )
 }
 
 /// A specification for starting the registry under a supervisor.
@@ -166,7 +179,7 @@ pub fn lookup(
   registry: Registry(key, msg),
   key: key,
 ) -> Option(process.Subject(msg)) {
-  let table = ets.from_name(registry.registry_name)
+  let table = ets.from_name(registry.table_name.name)
   case ets.lookup_dynamic(key, table) {
     Some(subject_dynamic) -> Some(cast_subject(subject_dynamic))
     None -> None
@@ -214,6 +227,9 @@ pub fn do_start(
 pub fn get_pid(registry: Registry(a, b)) -> Result(process.Pid, Nil) {
   get_subject(registry) |> process.subject_owner()
 }
+
+@external(erlang, "reki_ets_ffi", "new_unique_atom")
+fn new_unique_atom() -> dynamic.Dynamic
 
 @external(erlang, "reki_ets_ffi", "cast_subject")
 fn cast_subject(value: dynamic.Dynamic) -> process.Subject(msg)
