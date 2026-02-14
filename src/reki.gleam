@@ -29,13 +29,13 @@ import reki/internal
 /// return a stale Subject pointing to a dead process. This is the tradeoff
 /// for fast O(1) lookups.
 
-pub type TableReference =
-  internal.TableReference
+pub type TableIdentifier =
+  internal.TableIdentifier
 
 pub opaque type Registry(key, msg) {
   Registry(
     registry_name: process.Name(RegistryMessage(key, msg)),
-    table_name: internal.TableReference,
+    table_name: internal.TableIdentifier,
   )
 }
 
@@ -137,7 +137,7 @@ pub fn start(
 pub fn new() -> Registry(key, msg) {
   Registry(
     registry_name: process.new_name("reki"),
-    table_name: internal.new_table_reference(),
+    table_name: internal.new_table_identifier(),
   )
 }
 
@@ -176,7 +176,7 @@ pub fn lookup(
   registry: Registry(key, msg),
   key: key,
 ) -> Option(process.Subject(msg)) {
-  let table = ets.from_name(registry.table_name)
+  let table = ets.Table(registry.table_name)
   case ets.lookup_dynamic(key, table) {
     Some(subject_dynamic) -> Some(cast_subject(subject_dynamic))
     None -> None

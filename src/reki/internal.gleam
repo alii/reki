@@ -2,7 +2,7 @@
 /// so it can only be created via FFI — giving reki full ownership of the
 /// table name contract. It is separate from `process.Name` and is only
 /// used for ETS operations, never for actor registration.
-pub type TableReference
+pub type TableIdentifier
 
 @external(erlang, "reki_ets_ffi", "new_unique_atom")
-pub fn new_table_reference() -> TableReference
+pub fn new_table_identifier() -> TableIdentifier
