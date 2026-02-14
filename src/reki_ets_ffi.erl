@@ -34,7 +34,7 @@ new_unique_atom() ->
 
 -spec new(atom()) -> atom().
 new(Name) ->
-    ets:new(Name, [set, named_table, public, {read_concurrency, true}]).
+    ets:new(Name, [set, named_table, protected, {read_concurrency, true}]).
 
 -spec insert(atom(), term(), term()) -> {ok, nil} | {error, nil}.
 insert(Name, Key, Value) ->
