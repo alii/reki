@@ -28,9 +28,6 @@ import reki/ets
 /// return a stale Subject pointing to a dead process. This is the tradeoff
 /// for fast O(1) lookups.
 
-pub type TableIdentifier =
-  ets.TableIdentifier
-
 pub opaque type Registry(key, msg) {
   Registry(
     registry_name: process.Name(RegistryMessage(key, msg)),
