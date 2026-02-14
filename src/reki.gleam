@@ -5,7 +5,6 @@ import gleam/otp/actor
 import gleam/otp/supervision
 import gleam/result
 import reki/ets
-import reki/internal
 
 /// A registry that manages actors by key.
 /// Similar to Discord's gen_registry, this allows you to look up or start actors
@@ -30,12 +29,12 @@ import reki/internal
 /// for fast O(1) lookups.
 
 pub type TableIdentifier =
-  internal.TableIdentifier
+  ets.TableIdentifier
 
 pub opaque type Registry(key, msg) {
   Registry(
     registry_name: process.Name(RegistryMessage(key, msg)),
-    table_name: internal.TableIdentifier,
+    table_name: ets.TableIdentifier,
   )
 }
 
@@ -137,7 +136,7 @@ pub fn start(
 pub fn new() -> Registry(key, msg) {
   Registry(
     registry_name: process.new_name("reki"),
-    table_name: internal.new_table_identifier(),
+    table_name: ets.new_table_identifier(),
   )
 }
 
