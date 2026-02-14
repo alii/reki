@@ -3,7 +3,12 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/otp/supervision
 import gleam/result
-import reki/internal/ets
+
+/// An opaque atom used as the gen_server's registered name.
+pub type ServerName
+
+/// An opaque atom used as the ETS table name.
+pub type TableName
 
 /// A registry that manages actors by key.
 /// Similar to Discord's gen_registry, this allows you to look up or start actors
@@ -11,14 +16,18 @@ import reki/internal/ets
 ///
 /// ## Architecture
 ///
-/// Reki uses an ETS table for fast O(1) lookups, with a registry actor that
+/// Reki uses an ETS table for fast O(1) lookups, with an Erlang gen_server that
 /// handles process lifecycle (starting new actors, cleaning up dead ones).
-/// When a managed actor dies, reki receives an EXIT signal and removes the
-/// stale entry from ETS.
+/// When a managed actor dies, the gen_server receives an EXIT signal and removes
+/// the stale entry from ETS.
 ///
-/// The ETS table is owned by the registry actor. If the actor crashes, the
-/// BEAM automatically destroys the table. When the supervisor restarts the
-/// actor, a fresh table is created — no stale entries from a previous life.
+/// The gen_server implements the OTP supervisor protocol (`which_children`,
+/// `count_children`), registers as `type: supervisor` in its child spec, and
+/// properly terminates all children on shutdown.
+///
+/// The ETS table is owned by the gen_server. If it crashes, the BEAM
+/// automatically destroys the table. When the supervisor restarts it,
+/// a fresh table is created.
 ///
 /// ## Stale entries
 ///
@@ -27,96 +36,7 @@ import reki/internal/ets
 /// return a stale Subject pointing to a dead process. This is the tradeoff
 /// for fast O(1) lookups.
 pub opaque type Registry(key, msg) {
-  Registry(
-    registry_name: process.Name(RegistryMessage(key, msg)),
-    table_name: ets.TableIdentifier(key, process.Subject(msg)),
-  )
-}
-
-pub opaque type RegistryMessage(key, msg) {
-  StartIfNotExists(
-    key: key,
-    start_fn: fn(key) ->
-      Result(actor.Started(process.Subject(msg)), actor.StartError),
-    reply_to: process.Subject(Result(process.Subject(msg), actor.StartError)),
-  )
-  ProcessExited(pid: process.Pid)
-}
-
-@internal
-pub fn get_subject(
-  registry: Registry(key, msg),
-) -> process.Subject(RegistryMessage(key, msg)) {
-  process.named_subject(registry.registry_name)
-}
-
-fn start_registry_actor(
-  registry: Registry(key, msg),
-) -> Result(actor.Started(Registry(key, msg)), actor.StartError) {
-  actor.new_with_initialiser(1000, fn(_) {
-    process.trap_exits(True)
-
-    // Create a fresh ETS table owned by this actor, using the registry's
-    // dedicated table name (a unique atom). When this actor dies, the BEAM
-    // destroys the table automatically — no stale entries survive.
-    let _tid = ets.new(registry.table_name)
-
-    let selector =
-      process.new_selector()
-      |> process.select(get_subject(registry))
-      |> process.select_trapped_exits(fn(exit) { ProcessExited(exit.pid) })
-
-    actor.initialised(registry.table_name)
-    |> actor.selecting(selector)
-    |> actor.returning(registry)
-    |> Ok
-  })
-  |> actor.on_message(on_message)
-  |> actor.named(registry.registry_name)
-  |> actor.start
-}
-
-fn on_message(
-  table_id: ets.TableIdentifier(key, process.Subject(msg)),
-  message: RegistryMessage(key, msg),
-) -> actor.Next(
-  ets.TableIdentifier(key, process.Subject(msg)),
-  RegistryMessage(key, msg),
-) {
-  case message {
-    ProcessExited(pid:) -> {
-      case pdict_delete(pid) {
-        Ok(key) -> {
-          let _ = ets.delete(table_id, key)
-          Nil
-        }
-        Error(Nil) -> Nil
-      }
-
-      actor.continue(table_id)
-    }
-
-    StartIfNotExists(key:, start_fn:, reply_to:) -> {
-      case ets.lookup(table_id, key) {
-        Some(subject) -> {
-          process.send(reply_to, Ok(subject))
-          actor.continue(table_id)
-        }
-        None -> {
-          process.send(reply_to, {
-            use started <- result.map(start_fn(key))
-            let actor.Started(pid:, data: subject) = started
-            let assert Ok(Nil) = ets.insert(table_id, key, subject)
-            pdict_put(pid, key)
-
-            subject
-          })
-
-          actor.continue(table_id)
-        }
-      }
-    }
-  }
+  Registry(server_name: ServerName, table_name: TableName)
 }
 
 /// Start the registry. You likely want to use the `supervised` function instead,
@@ -124,39 +44,40 @@ fn on_message(
 pub fn start(
   registry: Registry(key, msg),
 ) -> Result(actor.Started(Registry(key, msg)), actor.StartError) {
-  start_registry_actor(registry)
+  start_link(registry.server_name, registry.table_name)
+  |> result.map(fn(pid) { actor.Started(pid:, data: registry) })
 }
 
 /// Create a registry. Call this at the start of your program before
 /// creating the supervision tree.
 ///
-/// **Important:** Each call creates a unique atom for the ETS table name.
-/// Atoms are never garbage collected by the BEAM, so this function must
-/// only be called a fixed number of times (e.g. once per registry at app
-/// startup). Do not call `new()` dynamically in a loop or on each request.
+/// **Important:** Each call creates unique atoms for the server name and
+/// ETS table name. Atoms are never garbage collected by the BEAM, so this
+/// function must only be called a fixed number of times (e.g. once per
+/// registry at app startup). Do not call `new()` dynamically in a loop
+/// or on each request.
 pub fn new() -> Registry(key, msg) {
-  Registry(
-    registry_name: process.new_name("reki"),
-    table_name: ets.new_table_identifier(),
-  )
+  Registry(server_name: new_server_name(), table_name: new_table_name())
 }
 
 /// A specification for starting the registry under a supervisor.
+///
+/// The registry declares itself as a supervisor in the child spec, since it
+/// manages child processes and implements the OTP supervisor protocol.
 pub fn supervised(
   registry: Registry(key, msg),
 ) -> supervision.ChildSpecification(Registry(key, msg)) {
-  supervision.worker(fn() { start_registry_actor(registry) })
+  supervision.supervisor(fn() { start(registry) })
 }
 
 /// Looks up an actor by key, or starts one if it doesn't exist.
 ///
 /// This is the primary function for getting an actor from the registry. It
 /// first checks ETS for an existing entry (fast O(1) lookup), and only goes
-/// through the registry actor if the key isn't found.
+/// through the registry gen_server if the key isn't found.
 ///
 /// In rare cases, this may return a stale Subject if a process just died but
-/// reki hasn't processed the EXIT yet. If calling the returned Subject fails,
-/// retry with `lookup_or_start_slow`.
+/// reki hasn't processed the EXIT yet.
 pub fn lookup_or_start(
   registry: Registry(key, msg),
   key: key,
@@ -176,7 +97,7 @@ pub fn lookup(
   registry: Registry(key, msg),
   key: key,
 ) -> Option(process.Subject(msg)) {
-  ets.lookup(registry.table_name, key)
+  ets_lookup(registry.table_name, key)
 }
 
 @internal
@@ -194,12 +115,12 @@ pub fn lookup_or_start_with_timeout(
 }
 
 /// Like `lookup_or_start`, but skips ETS and goes directly through
-/// the registry actor. By going through the actor, any pending `EXIT`s
-/// in the registry's mailbox are processed first. This lets you block
-/// and synchronize with the registry.
+/// the gen_server. By going through the gen_server, any pending `EXIT`s
+/// in the mailbox are processed first. This lets you block and synchronize
+/// with the registry.
 ///
 /// **You probably don't need this function.** It serializes all requests
-/// through the registry actor, which becomes a bottleneck under load. Make
+/// through the gen_server, which becomes a bottleneck under load. Make
 /// sure you understand exactly why you need the ordering guarantee before
 /// using this. Read the docs on the `Registry` type to understand the
 /// architecture and tradeoffs.
@@ -211,18 +132,39 @@ pub fn do_start(
     Result(actor.Started(process.Subject(msg)), actor.StartError),
   timeout: Int,
 ) -> Result(process.Subject(msg), actor.StartError) {
-  actor.call(get_subject(registry), timeout, fn(reply_to) {
-    StartIfNotExists(key:, start_fn:, reply_to:)
-  })
+  start_child(registry.server_name, key, start_fn, timeout)
 }
 
 @internal
 pub fn get_pid(registry: Registry(a, b)) -> Result(process.Pid, Nil) {
-  get_subject(registry) |> process.subject_owner()
+  whereis_server(registry.server_name)
 }
 
-@external(erlang, "reki_ets_ffi", "pdict_put")
-fn pdict_put(pid: process.Pid, key: key) -> Nil
+// FFI bindings to reki_server
 
-@external(erlang, "reki_ets_ffi", "pdict_delete")
-fn pdict_delete(pid: process.Pid) -> Result(key, Nil)
+@external(erlang, "reki_server", "start_link")
+fn start_link(
+  server_name: ServerName,
+  table_name: TableName,
+) -> Result(process.Pid, actor.StartError)
+
+@external(erlang, "reki_server", "start_child")
+fn start_child(
+  server_name: ServerName,
+  key: key,
+  start_fn: fn(key) ->
+    Result(actor.Started(process.Subject(msg)), actor.StartError),
+  timeout: Int,
+) -> Result(process.Subject(msg), actor.StartError)
+
+@external(erlang, "reki_server", "whereis_server")
+fn whereis_server(server_name: ServerName) -> Result(process.Pid, Nil)
+
+@external(erlang, "reki_server", "new_unique_atom")
+fn new_server_name() -> ServerName
+
+@external(erlang, "reki_server", "new_unique_atom")
+fn new_table_name() -> TableName
+
+@external(erlang, "reki_server", "lookup")
+fn ets_lookup(table_name: TableName, key: key) -> Option(process.Subject(msg))

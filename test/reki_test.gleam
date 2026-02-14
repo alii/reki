@@ -910,3 +910,102 @@ pub fn lookup_with_supervised_registry_test() {
   let assert option.Some(found) = reki.lookup(registry, "test_key")
   assert found == actor
 }
+
+pub fn do_start_then_lookup_test() {
+  let registry = create_registry()
+
+  let assert Ok(actor) =
+    reki.do_start(registry, "test_key", test_start_fn, 5000)
+
+  let assert option.Some(found) = reki.lookup(registry, "test_key")
+  assert found == actor
+  assert get_state(found) == 0
+}
+
+pub fn do_start_existing_key_returns_same_actor_test() {
+  let registry = create_registry()
+
+  let assert Ok(actor1) =
+    reki.lookup_or_start(registry, "test_key", test_start_fn)
+
+  process.send(actor1, Incr)
+  assert get_state(actor1) == 1
+
+  let assert Ok(actor2) =
+    reki.do_start(registry, "test_key", test_start_fn, 5000)
+
+  assert actor1 == actor2
+  assert get_state(actor2) == 1
+}
+
+pub fn start_fn_crash_does_not_kill_siblings_test() {
+  let registry = create_registry()
+
+  let assert Ok(actor) =
+    reki.lookup_or_start(registry, "sibling", test_start_fn)
+
+  process.send(actor, Incr)
+  process.send(actor, Incr)
+  assert get_state(actor) == 2
+
+  let assert Error(_) =
+    reki.lookup_or_start(registry, "bad_key", fn(_) {
+      panic as "start_fn exploded"
+    })
+
+  // Registry and sibling should be completely unaffected
+  assert process.is_alive(get_pid(actor))
+  assert get_state(actor) == 2
+}
+
+pub fn lookup_on_dead_registry_does_not_crash_test() {
+  let registry = reki.new()
+  let ready = process.new_subject()
+
+  process.spawn_unlinked(fn() {
+    // start from unlinked process so killing it won't kill the test
+    let assert Ok(_) = reki.start(registry)
+    process.send(ready, Nil)
+    process.sleep_forever()
+  })
+
+  process.receive_forever(ready)
+  let assert Ok(actor) =
+    reki.lookup_or_start(registry, "test_key", test_start_fn)
+  process.send(actor, Incr)
+  assert get_state(actor) == 1
+
+  // Kill the registry (unsupervised, so it stays dead)
+  let assert Ok(registry_pid) = reki.get_pid(registry)
+  process.kill(registry_pid)
+  process.sleep(100)
+
+  // lookup should return None, not crash the caller
+  let assert option.None = reki.lookup(registry, "test_key")
+
+  // lookup_or_start should return Error, not crash the caller
+  let assert Error(_) =
+    reki.lookup_or_start(registry, "test_key", test_start_fn)
+}
+
+pub fn two_registries_are_independent_test() {
+  let registry_a = create_registry()
+  let registry_b = create_registry()
+
+  let assert Ok(actor_a) =
+    reki.lookup_or_start(registry_a, "shared_key", test_start_fn)
+
+  let assert Ok(actor_b) =
+    reki.lookup_or_start(registry_b, "shared_key", test_start_fn)
+
+  assert actor_a != actor_b
+
+  process.send(actor_a, Incr)
+  assert get_state(actor_a) == 1
+  assert get_state(actor_b) == 0
+
+  let assert option.None = reki.lookup(registry_a, "only_in_b")
+  let assert Ok(_) =
+    reki.lookup_or_start(registry_b, "only_in_b", test_start_fn)
+  let assert option.None = reki.lookup(registry_a, "only_in_b")
+}
