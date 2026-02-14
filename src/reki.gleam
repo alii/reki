@@ -97,7 +97,7 @@ fn on_message(
     }
 
     StartIfNotExists(key:, start_fn:, reply_to:) -> {
-      case ets.lookup_dynamic(table_id, key) {
+      case ets.lookup(table_id, key) {
         Some(subject_dynamic) -> {
           process.send(reply_to, Ok(subject_dynamic))
           actor.continue(table_id)
@@ -176,7 +176,7 @@ pub fn lookup(
   registry: Registry(key, msg),
   key: key,
 ) -> Option(process.Subject(msg)) {
-  case ets.lookup_dynamic(registry.table_name, key) {
+  case ets.lookup(registry.table_name, key) {
     Some(subject_dynamic) -> Some(subject_dynamic)
     None -> None
   }

@@ -15,11 +15,8 @@ pub fn insert(
   insert_ets(table_id, key, value)
 }
 
-/// Look up a value by key in the table, returning it as a Dynamic value.
-pub fn lookup_dynamic(
-  table_id: TableIdentifier(key, value),
-  key: key,
-) -> Option(value) {
+/// Look up a value by key in the table.
+pub fn lookup(table_id: TableIdentifier(key, value), key: key) -> Option(value) {
   lookup_ets(table_id, key)
 }
 
