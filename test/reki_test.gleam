@@ -605,10 +605,8 @@ pub fn many_keys_stress_test() {
 
   let actors =
     list.fold(keys, [], fn(accum, key) {
-      case reki.lookup_or_start(registry, key, test_start_fn) {
-        Ok(actor) -> [actor, ..accum]
-        Error(_) -> accum
-      }
+      let assert Ok(actor) = reki.lookup_or_start(registry, key, test_start_fn)
+      [actor, ..accum]
     })
 
   assert list.length(actors) == 10
@@ -790,7 +788,7 @@ pub fn same_key_high_concurrency_test() {
     Ok(actor) -> {
       assert list.fold(actors, True, fn(acc, a) { acc && a == actor })
     }
-    Error(_) -> {
+    Error(Nil) -> {
       assert actors == []
     }
   }

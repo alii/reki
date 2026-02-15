@@ -1,14 +1,17 @@
+import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/otp/supervision
 import gleam/result
 
-/// An opaque atom used as the gen_server's registered name.
-pub type ServerName
+/// The gen_server's registered name  
+pub type ServerName =
+  atom.Atom
 
-/// An opaque atom used as the ETS table name.
-pub type TableName
+/// The ETS table name
+pub type TableName =
+  atom.Atom
 
 /// A registry that manages actors by key.
 /// Similar to Discord's gen_registry, this allows you to look up or start actors
@@ -39,7 +42,7 @@ pub opaque type Registry(key, msg) {
   Registry(server_name: ServerName, table_name: TableName)
 }
 
-/// Start the registry. You likely want to use the `supervised` function instead,
+/// Start the registry. **You likely want to use the `supervised` function instead**,
 /// to add the registry to your supervision tree, but this may be useful in tests.
 pub fn start(
   registry: Registry(key, msg),
