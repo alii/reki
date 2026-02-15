@@ -465,7 +465,7 @@ pub fn start_fn_failure_propagates_error_test() {
     |> actor.start
   }
 
-  let assert Error(_) =
+  let assert Error(actor.InitFailed(_)) =
     reki.lookup_or_start(registry, "failing_key", failing_start_fn)
 }
 
@@ -477,10 +477,10 @@ pub fn registry_handles_multiple_failures_test() {
     |> actor.start
   }
 
-  let assert Error(_) =
+  let assert Error(actor.InitFailed(_)) =
     reki.lookup_or_start(registry, "fail_key", failing_start_fn)
 
-  let assert Error(_) =
+  let assert Error(actor.InitFailed(_)) =
     reki.lookup_or_start(registry, "fail_key", failing_start_fn)
 
   let assert Ok(actor) =
@@ -954,7 +954,7 @@ pub fn start_fn_crash_does_not_kill_siblings_test() {
   process.send(actor, Incr)
   assert get_state(actor) == 2
 
-  let assert Error(_) =
+  let assert Error(actor.InitExited(_)) =
     reki.lookup_or_start(registry, "bad_key", fn(_) {
       panic as "start_fn exploded"
     })
@@ -989,8 +989,8 @@ pub fn lookup_on_dead_registry_does_not_crash_test() {
   // lookup should return None, not crash the caller
   let assert option.None = reki.lookup(registry, "test_key")
 
-  // lookup_or_start should return Error, not crash the caller
-  let assert Error(_) =
+  // lookup_or_start should return InitExited(noproc), not crash the caller
+  let assert Error(actor.InitExited(_)) =
     reki.lookup_or_start(registry, "test_key", test_start_fn)
 }
 
@@ -1043,4 +1043,17 @@ pub fn otp_count_children_test() {
   let assert Ok(_) = reki.lookup_or_start(registry, "key3", test_start_fn)
 
   assert count_children(registry_pid) == 3
+}
+
+pub fn start_child_timeout_returns_init_timeout_test() {
+  let registry = create_registry()
+
+  let slow_start_fn = fn(key) {
+    process.sleep(500)
+    test_start_fn(key)
+  }
+
+  // 1ms timeout, 500ms start — should timeout
+  let assert Error(actor.InitTimeout) =
+    reki.lookup_or_start_with_timeout(registry, "slow_key", slow_start_fn, 1)
 }

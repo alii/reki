@@ -14,7 +14,7 @@ start_link(ServerName, TableName) ->
         {error, {already_started, _}} ->
             {error, {init_failed, <<"already started">>}};
         {error, Reason} ->
-            {error, {init_crashed, Reason}}
+            {error, {init_exited, {abnormal, Reason}}}
     end.
 
 %% Call the registry to look up or start a child. Wraps gen_server:call
@@ -23,12 +23,16 @@ start_link(ServerName, TableName) ->
 start_child(ServerName, Key, StartFn, Timeout) ->
     try gen_server:call(ServerName, {start_child, Key, StartFn}, Timeout)
     catch
-        exit:{timeout, _} ->
+        exit:{timeout, {gen_server, call, _Args}} ->
             {error, init_timeout};
-        exit:{noproc, _} ->
-            {error, init_timeout};
-        exit:Reason ->
-            {error, {init_crashed, Reason}}
+        exit:{normal, {gen_server, call, _Args}} ->
+            {error, {init_exited, normal}};
+        exit:{killed, {gen_server, call, _Args}} ->
+            {error, {init_exited, killed}};
+        exit:{noproc, {gen_server, call, _Args}} ->
+            {error, {init_exited, {abnormal, noproc}}};
+        exit:{Reason, {gen_server, call, _Args}} ->
+            {error, {init_exited, {abnormal, Reason}}}
     end.
 
 %% Look up the pid of the gen_server by registered name.
@@ -81,8 +85,8 @@ handle_call({start_child, Key, StartFn}, _From, #{table := Table} = State) ->
                 {error, Reason} ->
                     {error, Reason}
             catch
-                _Class:Reason ->
-                    {error, {init_crashed, Reason}}
+                Class:Reason ->
+                    {error, {init_exited, {abnormal, {Class, Reason}}}}
             end
     end,
     {reply, Reply, State};
