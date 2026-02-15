@@ -78,9 +78,8 @@ pub fn main() {
 
 ## How it works
 
-Like gen_registry, reki stores `{key, subject}` mappings in ETS for fast O(1) lookups that bypass the registry actor. The registry actor serializes "lookup or start" operations to prevent races when multiple processes request the same key simultaneously.
+Like gen_registry, reki is an Erlang gen_server that stores `{key, subject}` mappings in ETS for fast O(1) lookups. The gen_server serializes "lookup or start" operations to prevent races when multiple processes request the same key simultaneously.
 
-- **Fast reads**: Existing actors are looked up directly from ETS
-- **Direct spawning**: Workers are spawned directly by the registry (like gen_registry)
-- **Automatic cleanup**: The registry monitors actors and removes them from ETS when they die
-- **Concurrent safety**: Start operations are serialized through the registry actor
+- **Fast reads**: Existing actors are looked up directly from ETS, bypassing the gen_server
+- **Automatic cleanup**: The registry links to child processes and traps exits, removing entries from ETS when they die
+- **Concurrent safety**: Start operations are serialized through the gen_server
