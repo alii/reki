@@ -1,5 +1,6 @@
 import gleam/erlang/process
 import gleam/function
+import gleam/int
 import gleam/list
 import gleam/option
 import gleam/otp/actor
@@ -772,65 +773,48 @@ pub fn process_down_message_idempotency_test() -> Nil {
 pub fn high_concurrency_stress_test() -> Nil {
   let registry = create_registry()
   let results = process.new_subject()
-  let num_requests = 50
-
-  list.range(0, num_requests)
-  |> list.each(fn(i) {
+  let n = 50
+  int.range(from: 0, to: n, with: Nil, run: fn(_, i) {
     process.spawn(fn() {
-      case
+      let assert Ok(actor) =
         reki.lookup_or_start(
           registry,
           "stress_key" <> string.inspect(i),
           test_start_fn,
         )
-      {
-        Ok(actor) -> process.send(results, Ok(actor))
-        Error(e) -> process.send(results, Error(e))
-      }
+      process.send(results, actor)
     })
+    Nil
   })
 
-  list.range(0, num_requests)
-  |> list.each(fn(_) {
-    let assert Ok(Ok(_)) = process.receive(results, 1000)
+  int.range(from: 0, to: n, with: Nil, run: fn(_, _) {
+    let assert Ok(_) = process.receive(results, 1000)
+    Nil
   })
 }
 
 pub fn same_key_high_concurrency_test() -> Nil {
   let registry = create_registry()
   let results = process.new_subject()
-  let num_requests = 100
+  let n = 100
 
-  list.range(0, num_requests)
-  |> list.each(fn(_) {
+  int.range(from: 0, to: n, with: Nil, run: fn(_, _) {
     process.spawn(fn() {
-      case reki.lookup_or_start(registry, "same_key", test_start_fn) {
-        Ok(actor) -> process.send(results, Ok(actor))
-        Error(e) -> process.send(results, Error(e))
-      }
+      let assert Ok(actor) =
+        reki.lookup_or_start(registry, "same_key", test_start_fn)
+      process.send(results, actor)
     })
+    Nil
   })
 
   let actors =
-    list.fold(list.range(0, num_requests), [], fn(accum, _) {
-      case process.receive(results, 1000) {
-        Ok(Ok(actor)) -> [actor, ..accum]
-        _ -> accum
-      }
+    int.range(from: 0, to: n, with: [], run: fn(acc, _) {
+      let assert Ok(actor) = process.receive(results, 1000)
+      [actor, ..acc]
     })
 
-  assert list.length(actors) >= num_requests
-
-  let first_actor = list.first(actors)
-
-  case first_actor {
-    Ok(actor) -> {
-      assert list.fold(actors, True, fn(acc, a) { acc && a == actor })
-    }
-    Error(Nil) -> {
-      assert actors == []
-    }
-  }
+  let assert Ok(first) = list.first(actors)
+  assert list.all(actors, fn(a) { a == first })
 }
 
 pub fn lookup_returns_none_when_key_not_found_test() -> option.Option(
