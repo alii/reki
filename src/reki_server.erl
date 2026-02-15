@@ -64,6 +64,29 @@ lookup(Table, Key) ->
         error:badarg -> none
     end.
 
+%% Internal helpers
+
+child_pids() ->
+    [Pid || Pid <- erlang:get_keys(), is_pid(Pid)].
+
+start_and_register(Table, Key, StartFn) ->
+    case safe_start(Key, StartFn) of
+        {ok, {started, Pid, Subject}} ->
+            link(Pid),
+            ets:insert(Table, {Key, Subject}),
+            erlang:put(Pid, Key),
+            {ok, Subject};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+safe_start(Key, StartFn) ->
+    try StartFn(Key)
+    catch
+        Class:Reason ->
+            {error, {init_exited, {abnormal, {Class, Reason}}}}
+    end.
+
 %% gen_server callbacks
 
 init(TableName) ->
@@ -73,31 +96,17 @@ init(TableName) ->
 
 handle_call({start_child, Key, StartFn}, _From, #{table := Table} = State) ->
     Reply = case lookup(Table, Key) of
-        {some, Subject} ->
-            {ok, Subject};
-        none ->
-            try StartFn(Key) of
-                {ok, {started, Pid, Subject}} ->
-                    link(Pid),
-                    ets:insert(Table, {Key, Subject}),
-                    erlang:put(Pid, Key),
-                    {ok, Subject};
-                {error, Reason} ->
-                    {error, Reason}
-            catch
-                Class:Reason ->
-                    {error, {init_exited, {abnormal, {Class, Reason}}}}
-            end
+        {some, Subject} -> {ok, Subject};
+        none -> start_and_register(Table, Key, StartFn)
     end,
     {reply, Reply, State};
 
 handle_call(which_children, _From, State) ->
-    Children = [{undefined, Pid, worker, dynamic}
-                || Pid <- erlang:get_keys(), is_pid(Pid)],
+    Children = [{undefined, Pid, worker, dynamic} || Pid <- child_pids()],
     {reply, Children, State};
 
 handle_call(count_children, _From, State) ->
-    Count = length([Pid || Pid <- erlang:get_keys(), is_pid(Pid)]),
+    Count = length(child_pids()),
     Reply = [{specs, 1}, {active, Count}, {supervisors, 0}, {workers, Count}],
     {reply, Reply, State};
 
@@ -121,5 +130,5 @@ terminate(_Reason, _State) ->
     lists:foreach(fun(Pid) ->
         unlink(Pid),
         exit(Pid, kill)
-    end, [Pid || Pid <- erlang:get_keys(), is_pid(Pid)]),
+    end, child_pids()),
     ok.
