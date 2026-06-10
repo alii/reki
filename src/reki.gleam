@@ -138,6 +138,21 @@ pub fn do_start(
   start_child(registry.server_name, key, start_fn, timeout)
 }
 
+/// List every `(key, subject)` pair currently in the registry, in no
+/// particular order. A direct ETS read (`ets:tab2list`), so it's cheap and
+/// doesn't serialise through the gen_server — and, like `lookup`, it may
+/// briefly include an entry for a process that just died but whose EXIT
+/// reki hasn't processed yet.
+///
+/// Mirrors gen_registry's `to_list/1` (its `reduce/3` is `to_list |> fold`
+/// here): use it to sweep the registry (rebalancing, metrics, draining)
+/// without maintaining a parallel index of keys.
+pub fn to_list(
+  registry: Registry(key, msg),
+) -> List(#(key, process.Subject(msg))) {
+  ets_tab2list(registry.table_name)
+}
+
 @internal
 pub fn get_pid(registry: Registry(a, b)) -> Result(process.Pid, Nil) {
   whereis_server(registry.server_name)
@@ -171,3 +186,6 @@ fn new_table_name() -> TableName
 
 @external(erlang, "reki_server", "lookup")
 fn ets_lookup(table_name: TableName, key: key) -> Option(process.Subject(msg))
+
+@external(erlang, "ets", "tab2list")
+fn ets_tab2list(table_name: TableName) -> List(#(key, process.Subject(msg)))

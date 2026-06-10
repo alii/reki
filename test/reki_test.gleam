@@ -1091,3 +1091,30 @@ pub fn start_child_timeout_returns_init_timeout_test() -> Result(
   let assert Error(actor.InitTimeout) =
     reki.lookup_or_start_with_timeout(registry, "slow_key", slow_start_fn, 1)
 }
+
+pub fn to_list_test() -> Nil {
+  let registry = create_registry()
+
+  assert reki.to_list(registry) == []
+
+  let assert Ok(actor1) = reki.lookup_or_start(registry, "key1", test_start_fn)
+  let assert Ok(actor2) = reki.lookup_or_start(registry, "key2", test_start_fn)
+
+  let entries = reki.to_list(registry)
+  assert list.length(entries) == 2
+  assert list.contains(entries, #("key1", actor1))
+  assert list.contains(entries, #("key2", actor2))
+}
+
+pub fn to_list_drops_dead_entries_test() -> Nil {
+  let registry = create_registry()
+
+  let assert Ok(actor1) = reki.lookup_or_start(registry, "key1", test_start_fn)
+  let assert Ok(_) = reki.lookup_or_start(registry, "key2", test_start_fn)
+
+  process.send(actor1, Crash)
+  // give the registry a moment to process the EXIT and prune the entry
+  process.sleep(timeout)
+
+  assert list.map(reki.to_list(registry), fn(entry) { entry.0 }) == ["key2"]
+}
