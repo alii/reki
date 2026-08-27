@@ -25,6 +25,7 @@ pub type TestMessage {
   Incr
   Get(reply: process.Subject(Int))
   Crash
+  Stop
 }
 
 fn test_start_fn(
@@ -39,6 +40,7 @@ fn test_start_fn(
         actor.continue(state)
       }
       Crash -> actor.stop_abnormal("crash")
+      Stop -> actor.stop()
     }
   })
   |> actor.start
@@ -86,12 +88,16 @@ fn get_state(actor: process.Subject(TestMessage)) -> Int {
   actor.call(actor, timeout, fn(reply) { Get(reply:) })
 }
 
-fn wait_dead(pid: process.Pid) -> process.Down {
-  let m = process.monitor(pid)
-  process.kill(pid)
+fn await_down(m: process.Monitor) -> process.Down {
   process.new_selector()
   |> process.select_specific_monitor(m, function.identity)
   |> process.selector_receive_forever()
+}
+
+fn kill_and_await_down(pid: process.Pid) -> process.Down {
+  let m = process.monitor(pid)
+  process.kill(pid)
+  await_down(m)
 }
 
 fn wait_unregistered(registry: reki.Registry(a, b), key: a) -> Nil {
@@ -256,6 +262,7 @@ pub fn readme_example_test() -> Nil {
             actor.continue(state)
           }
           Crash -> actor.continue(state)
+          Stop -> actor.stop()
         }
       })
       |> actor.start
@@ -279,6 +286,7 @@ pub fn readme_example_test() -> Nil {
             actor.continue(state)
           }
           Crash -> actor.continue(state)
+          Stop -> actor.stop()
         }
       })
       |> actor.start
@@ -314,7 +322,7 @@ pub fn supervised_actor_restarts_after_crash_test() -> Nil {
   process.send(actor, Incr)
   assert get_state(actor) == 2
 
-  wait_dead(pid)
+  kill_and_await_down(pid)
   wait_unregistered(registry, "crash_test")
 
   let assert Ok(restarted_actor) =
@@ -340,7 +348,7 @@ pub fn supervised_actor_restarts_after_abnormal_exit_test() -> Nil {
   assert get_state(actor) == 1
 
   process.send(actor, Crash)
-  wait_dead(pid)
+  kill_and_await_down(pid)
   wait_unregistered(registry, "abnormal_exit_test")
 
   let assert Ok(restarted_actor) =
@@ -374,7 +382,7 @@ pub fn actor_crash_does_not_affect_other_actors_test() -> Nil {
   assert get_state(actor_b) == 3
 
   let pid_a = get_pid(actor_a)
-  wait_dead(pid_a)
+  kill_and_await_down(pid_a)
   wait_unregistered(registry, "channel_a")
 
   assert !process.is_alive(pid_a)
@@ -404,7 +412,7 @@ pub fn registry_continues_working_after_actor_restart_test() -> Nil {
   process.send(actor1, Incr)
   assert get_state(actor1) == 2
 
-  wait_dead(pid1)
+  kill_and_await_down(pid1)
   wait_unregistered(registry, "continues_test")
 
   let assert Ok(actor2) =
@@ -434,8 +442,8 @@ pub fn registry_restarts_after_crash_when_supervised_test() -> Nil {
   assert get_state(actor) == 1
 
   let assert Ok(registry_pid) = reki.get_pid(registry)
-  wait_dead(registry_pid)
-  wait_dead(pid)
+  kill_and_await_down(registry_pid)
+  kill_and_await_down(pid)
   wait_restarted(registry, registry_pid)
 
   let assert Ok(new_actor) =
@@ -459,8 +467,8 @@ pub fn registry_ets_table_cleared_on_restart_test() -> Nil {
   assert get_state(actor1) == 3
 
   let assert Ok(registry_pid) = reki.get_pid(registry)
-  wait_dead(registry_pid)
-  wait_dead(pid1)
+  kill_and_await_down(registry_pid)
+  kill_and_await_down(pid1)
   wait_restarted(registry, registry_pid)
 
   let assert Ok(actor2) =
@@ -482,7 +490,7 @@ pub fn registry_cleans_up_entry_when_actor_dies_test() -> Nil {
   process.send(actor1, Incr)
   assert get_state(actor1) == 1
 
-  wait_dead(pid1)
+  kill_and_await_down(pid1)
   wait_unregistered(registry, "cleanup_test")
 
   let assert Ok(actor2) =
@@ -567,6 +575,7 @@ pub fn actor_crashes_immediately_after_start_test() -> Nil {
           actor.continue(state)
         }
         Crash -> actor.stop_abnormal("crash")
+        Stop -> actor.stop()
       }
     })
     |> actor.start
@@ -666,7 +675,7 @@ pub fn lookup_after_registry_restart_test() -> Nil {
   assert get_state(actor1) == 2
 
   let assert Ok(registry_pid) = reki.get_pid(registry)
-  wait_dead(registry_pid)
+  kill_and_await_down(registry_pid)
   wait_restarted(registry, registry_pid)
 
   assert process.is_alive(pid1) == False
@@ -690,7 +699,7 @@ pub fn factory_supervisor_restart_test() -> Nil {
   assert get_state(actor1) == 1
 
   let assert Ok(registry_pid) = reki.get_pid(registry)
-  wait_dead(registry_pid)
+  kill_and_await_down(registry_pid)
   wait_restarted(registry, registry_pid)
 
   assert process.is_alive(pid1) == False
@@ -711,7 +720,10 @@ pub fn actor_exits_normally_test() -> Nil {
   assert get_state(actor) == 1
 
   let pid = get_pid(actor)
-  wait_dead(pid)
+  let m = process.monitor(pid)
+  process.send(actor, Stop)
+  assert await_down(m)
+    == process.ProcessDown(monitor: m, pid:, reason: process.Normal)
   wait_unregistered(registry, "normal_exit")
 
   let assert Ok(new_actor) =
@@ -736,9 +748,9 @@ pub fn multiple_actors_crash_simultaneously_test() -> Nil {
   assert get_state(actor2) == 1
   assert get_state(actor3) == 1
 
-  wait_dead(get_pid(actor1))
-  wait_dead(get_pid(actor2))
-  wait_dead(get_pid(actor3))
+  kill_and_await_down(get_pid(actor1))
+  kill_and_await_down(get_pid(actor2))
+  kill_and_await_down(get_pid(actor3))
   wait_unregistered(registry, "key1")
   wait_unregistered(registry, "key2")
   wait_unregistered(registry, "key3")
@@ -761,7 +773,7 @@ pub fn process_down_message_idempotency_test() -> Nil {
   let assert Ok(actor) =
     reki.lookup_or_start(registry, "test_key", test_start_fn)
 
-  wait_dead(get_pid(actor))
+  kill_and_await_down(get_pid(actor))
   wait_unregistered(registry, "test_key")
 
   let assert Ok(new_actor) =
@@ -873,7 +885,7 @@ pub fn lookup_returns_none_after_actor_dies_test() -> option.Option(
   assert found == actor
 
   let pid = get_pid(actor)
-  wait_dead(pid)
+  kill_and_await_down(pid)
   wait_unregistered(registry, "dying_key")
 
   let assert option.None = reki.lookup(registry, "dying_key")
@@ -1013,7 +1025,7 @@ pub fn lookup_on_dead_registry_does_not_crash_test() -> Result(
 
   // Kill the registry (unsupervised, so it stays dead)
   let assert Ok(registry_pid) = reki.get_pid(registry)
-  wait_dead(registry_pid)
+  kill_and_await_down(registry_pid)
 
   // lookup should return None, not crash the caller
   let assert option.None = reki.lookup(registry, "test_key")
